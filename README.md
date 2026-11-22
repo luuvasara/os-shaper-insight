@@ -157,6 +157,20 @@ effect.
 
 How it was tested, with the results: `TESTING.md`.
 
+## Install a release package
+
+Each [release](https://github.com/luuvasara/os-shaper-insight/releases) carries the package
+built from that tag and its SHA-256. The package is not signed; check the hash. Built for
+OPNsense 26.7 (amd64).
+
+```sh
+fetch https://github.com/luuvasara/os-shaper-insight/releases/download/v1.0.h/os-shaper-insight-devel-1.0.h.pkg
+sha256 -q os-shaper-insight-devel-1.0.h.pkg   # compare with SHA256SUMS on the release page
+pkg add os-shaper-insight-devel-1.0.h.pkg
+```
+
+Updates are manual: install the next release's package the same way. Removal: see "Remove".
+
 ## Install for testing (from source)
 
 These are the exact steps used on the development VM (OPNsense 26.7.9_3, amd64). They build
