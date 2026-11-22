@@ -25,14 +25,14 @@ counters untouched. The setup page's Apply and Remove are tested in the lab only
 
 ## Automated checks
 
-| Check | Result (at 1.0.h unless noted) |
+| Check | Result (at 1.0.i unless noted) |
 |---|---|
-| `python3 -m unittest discover -s tests` | 201 tests, OK |
+| `python3 -m unittest discover -s tests` | 210 tests, OK |
 | `tools/claims/build.py --check` | 26 claim ids used, 27 in `claims.json`, 0 problems |
 | ruff `--select F`, pycodestyle (E501 ignored), `php -l` (PHP 8.5), phpcs (core ruleset), shellcheck | clean (at 1.0.f) |
 | axe-core 4 (WCAG 2.0/2.1/2.2 A+AA + best practice), every page, 1920x1080 and 390x844, light and dark | 0 violations in this plugin's markup; the remaining hits come from OPNsense core pages (menu search box, sidebar toggle size, navbar landmarks, dark footer links) |
 | `tools/shots/terms-check.js` | every technical term on 6 rendered pages has a glossary chip; fails as intended when chips are removed (`SA_TERMS_NEGATIVE=1`) |
-| `tools/shots/tables-check.js` | every table on the five pages is built by the shared table component: sortable by keyboard, `aria-sort`, an empty state, a swatch where rows have a chart series, linked object names with hover, no sideways scroll at 390 px; fails as intended on a plain table (`SA_TABLES_NEGATIVE=1`) |
+| `tools/shots/tables-check.js` | every table on the five pages is built by the shared table component: sortable by keyboard, `aria-sort`, an empty state, a swatch where rows have a chart series, linked object names with hover, no sideways scroll at 1920 or 390 px, no table wider than its box, no cell cut off, IPv4 addresses on one line; fails as intended on a plain table and on unprotected addresses (`SA_TABLES_NEGATIVE=1`) |
 | `tools/shots/hosts-stress.js` | the sharing page answered with 1,000 fake hosts (documentation addresses): default view 4 rows, the opened list about 41 rows and 500 nodes in the DOM, search finds one host and says so, IP sort puts IPv4 first |
 | `tools/shots/crosshair.js` | the three stacked bufferbloat charts share one x mapping and a hover activates the same second on all three |
 
@@ -160,6 +160,24 @@ includes a control that a text sort differs), an empty state, Name / IP / MAC / 
 columns for hosts (maker from core's IEEE OUI list, nothing looked up outside the firewall),
 "shared xN" for a MAC used by several addresses and "private (random) MAC" for locally
 administered ones, and object names linked to their page in core.
+
+## Tables and dashboard summary (1.0.i)
+
+Tables share the page width and wrap their text instead of sizing to their longest cell; a
+table that still needs room scrolls in its own box. On a phone the host name stacks over
+"IP · maker" and secondary columns are hidden. The dashboard summary names the first finding,
+so it agrees with its badge. Tests: `SummaryWords` in `tests/test_sharing.py`, the checks in
+`tools/shots/tables-check.js` above.
+
+## Incremental history polling (1.0.i)
+
+After one full answer the sharing page asks only for rows newer than the ones it has
+(`sampler/history/<window>?since=`); the server repeats the last two steps, because the newest
+row can still change. It falls back to a full answer after an error, a gap, or a change of
+window, pipes or coloured hosts. Measured with a one-hour window: the gzip answer per 10 s
+poll drops from about 16 kB to 1 kB with one busy pipe and from about 120 kB to 3 kB with
+eight. Tests: `IncrementalHistory` in `tests/test_tables.py` (the merged page equals a full
+answer taken later; restart mid-window; no merge when the hosts, window or pipes changed).
 
 ## Known gaps
 

@@ -129,6 +129,24 @@ def queue_label(q):
     return 'queue %s%s' % (q.get('number', '?'), (' "%s"' % desc) if desc else '')
 
 
+def cake_ok_text(n, others, first_problem=None):
+    """ the summary when CAKE runs everywhere it is configured; a warning elsewhere is named, so the
+    badge and the words agree (review 2026-11-22: a "Check" badge next to "CAKE is running on all 2
+    pipes"). "{n} needs a look" is filled in once the problems are counted per object. """
+    which = 'the pipe' if n == 1 else ('both pipes' if n == 2 else 'all %d pipes' % n)
+    rest = '.' if not others else (
+        ' (%s own scheduler, for example a small control lane).'
+        % ('1 other active pipe uses its' if others == 1 else '%d other active pipes use their' % others,))
+    text = '{{term:cake}} is running on %s that %s a CAKE entry%s' % (which, 'has' if n == 1 else 'have', rest)
+    if first_problem:
+        f = first_problem
+        what = f.get('object') or ('pipe %s' % f['number'] if f.get('number') else '')
+        # a labelled term becomes its label; a bare {{term:id}} stays (the page and the widget render it)
+        why = re.sub(r'\{\{term:[^|}]+\|([^}]*)\}\}', r'\1', f.get('text') or '')
+        text += ' {n} needs a look: %s%s' % ((what + ': ' if what else ''), why)
+    return text
+
+
 def analyse(snap):
     cfg = snap['config']
     kern = snap['kernel']
@@ -359,11 +377,8 @@ def analyse(snap):
         summary = {'level': 'info', 'text': 'The traffic shaper has no pipes, so nothing is shaped.'}
     elif cake_wanted and len(cake_running) == len(cake_wanted):
         level = 'ok' if not problems else ('bad' if any(f['level'] == 'bad' for f in problems) else 'warn')
-        rest = '.' if len(active) == len(cake_wanted) else (
-            ' (%d other active pipes use their own scheduler, for example small control lanes).'
-            % (len(active) - len(cake_wanted)))
-        summary = {'level': level,
-                   'text': '{{term:cake}} is running on all %d pipes that have a CAKE entry%s' % (len(cake_wanted), rest)}
+        summary = {'level': level, 'text': cake_ok_text(len(cake_wanted), len(active) - len(cake_wanted),
+                                                        problems[0] if problems else None)}
     elif cake_wanted:
         summary = {'level': 'warn',
                    'text': '{{term:cake}} is configured on %d pipes but running on %d. The others are still '
@@ -380,6 +395,9 @@ def analyse(snap):
         objects.add(re.match(r'(?:pipe|queue|rule) \S+(?: \S+)?', name).group(0)
                     if name.startswith('rule ') else ' '.join(name.split()[:2]))
     summary['problems'] = len(objects)
+    summary['text'] = summary['text'].replace(
+        # the count itself is the status page's own line ("2 things below need a look"); here only the first
+        '{n} needs a look', 'Needs a look' if len(objects) == 1 else 'First to look at')
 
     module = {
         'installed': oscake is not None,

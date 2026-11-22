@@ -94,10 +94,10 @@ $(document).ready(function () {
         pipeOrder = d.pipes.map(function (p) { return String(p.number); }).sort();
         SA.table('#sa-pipes', [
             {title: '{{ lang._("Pipe") }}', field: 'pipe', type: 'html', swatch: true, sortField: 'number'},
-            {title: '{{ lang._("Limit") }}', field: 'limit', type: 'num', fmt: function (v) { return v === null ? '–' : SA.rate(v); }},
-            {title: '{{ lang._("Configured") }}', field: 'configured', type: 'html'},
+            {title: '{{ lang._("Limit") }}', field: 'limit', type: 'num', wide: true, fmt: function (v) { return v === null ? '–' : SA.rate(v); }},
+            {title: '{{ lang._("Configured") }}', field: 'configured', type: 'html', wide: true},
             {title: '{{ lang._("Running in the kernel") }}', field: 'loaded', type: 'html'},
-            {title: '{{ lang._("Rules via queue / direct") }}', field: 'via', type: 'num', fmt: function (v, row) { return v + ' / ' + row.direct; }},
+            {title: '{{ lang._("Rules via queue / direct") }}', field: 'via', type: 'num', wide: true, fmt: function (v, row) { return v + ' / ' + row.direct; }},
             {title: '{{ lang._("Verdict") }}', field: 'verdict', type: 'html', sortField: 'rank'}
         ], d.pipes.map(function (p) {
             const lim = p.bandwidth_kernel !== null ? p.bandwidth_kernel : p.bandwidth_config;
@@ -395,7 +395,7 @@ $(document).ready(function () {
             });
             SA.table('#sa-shares-table', [{title: '{{ lang._("Name") }}', field: 'name'}, {title: '{{ lang._("IP") }}', field: 'ip', type: 'ip'},
                 {title: '{{ lang._("MAC") }}', field: 'mac'}, {title: '{{ lang._("Manufacturer") }}', field: 'vendor'},
-                {title: '{{ lang._("Interface") }}', field: 'iface'}], rows,
+                {title: '{{ lang._("Interface") }}', field: 'iface', wide: true}], rows,
                 {sort: ['mac', 'asc'], empty: '{{ lang._("No device with several addresses right now.") }}'});
         }).catch(function (e) {
             $('#sa-shares').html('<p>' + SA.badge('bad', '{{ lang._("Not available") }}') + ' ' + SA.esc(e.message) +

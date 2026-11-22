@@ -180,7 +180,7 @@ $(document).ready(function () {
             {title: '{{ lang._("Object") }}', field: 'kind', type: 'html', sortField: 'kindRank'},
             {title: '{{ lang._("Number") }}', field: 'num', type: 'num', fmt: function (v, row) { return row.id; }},
             {title: '{{ lang._("Name") }}', field: 'name', type: 'html'},
-            {title: '{{ lang._("Settings") }}', field: 'fields', type: 'html', sort: false},
+            {title: '{{ lang._("Settings") }}', field: 'fields', type: 'html', sort: false, wide: true},
             {title: '{{ lang._("Why") }}', field: 'why', type: 'html'}];
         const planRow = function (o, action) {
             const id = o.kind === 'rule' ? '#' + o.sequence : (o.kind === 'cake' ? '{{ lang._("pipe") }} ' + o.pipe : o.number);

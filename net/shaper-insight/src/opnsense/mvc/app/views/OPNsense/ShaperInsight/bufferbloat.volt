@@ -202,11 +202,11 @@ $(document).ready(function () {
             SA.table('#sa-bb-phases', [
                 {title: 'Phase', field: 'phase', sortField: 'idx'},
                 {title: 'Added delay (median)', field: 'added', type: 'num', fmt: function (v, row) { return (row.idle ? 'baseline ' : '') + ms(v); }},
-                {title: 'Added, 95th / 99th percentile', field: 'p95', type: 'num', fmt: function (v, row) { return row.idle ? '–' : ms(v) + ' / ' + ms(row.p99); }},
-                {title: 'Loss', field: 'loss', type: 'num', fmt: num(function (v) { return v + ' %'; })},
+                {title: 'Added, 95th / 99th percentile', field: 'p95', type: 'num', wide: true, fmt: function (v, row) { return row.idle ? '–' : ms(v) + ' / ' + ms(row.p99); }},
+                {title: 'Loss', field: 'loss', type: 'num', wide: true, fmt: num(function (v) { return v + ' %'; })},
                 {title: 'Download', field: 'down', type: 'num', fmt: function (v) { return mbit(v); }},
                 {title: 'Upload', field: 'up', type: 'num', fmt: function (v) { return mbit(v); }},
-                {title: 'Round trips per minute', field: 'rpm', type: 'num', fmt: num(function (v) { return v.toLocaleString(); })}
+                {title: 'Round trips per minute', field: 'rpm', type: 'num', wide: true, fmt: num(function (v) { return v.toLocaleString(); })}
             ], phaseRows, {sort: ['phase', 'asc'], label: 'Phases of this test', empty: 'No phase finished.'});
         }
         if (r.samples) { draw(r); }

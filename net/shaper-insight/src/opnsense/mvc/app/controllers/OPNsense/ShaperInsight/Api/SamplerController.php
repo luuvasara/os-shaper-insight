@@ -84,7 +84,10 @@ class SamplerController extends ApiControllerBase
     public function historyAction($seconds = '3600')
     {
         $seconds = ctype_digit((string)$seconds) ? (int)$seconds : 3600;
-        return $this->call('history', [(string)max(60, min($seconds, 365 * 86400))]);
+        /* ?since=<newest row the page has>: only the rows after it (incremental polling) */
+        $since = (string)$this->request->get('since', null, '');
+        $since = preg_match('/^[0-9]{1,12}(\.[0-9]{1,6})?$/', $since) ? $since : '-';
+        return $this->call('history', [(string)max(60, min($seconds, 365 * 86400)), $since]);
     }
 
     public function startAction()

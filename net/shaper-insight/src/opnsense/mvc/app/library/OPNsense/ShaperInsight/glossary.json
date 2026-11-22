@@ -923,9 +923,9 @@
  "hosts-grouped": {
   "name": "All other hosts",
   "group": "G0",
-  "plain": "The sharing chart draws the busiest hosts one by one (the setting \"hosts drawn\", 3 to 12, 6 by default) and adds up the rest in one band, so the chart stays readable. The sampler keeps the 16 busiest hosts of each pipe per sample, so its file and its cost stay bounded with thousands of connections; hosts below those 16 are only counted in the sum. Open the row to list the grouped hosts of the newest 10 s.",
+  "plain": "The sharing chart gives the busiest hosts of the shown window a colour (the setting \"Hosts drawn\", 3 to 8, 8 by default) and adds up the rest in one grey band, so the chart stays readable: more than 8 colours cannot be told apart. The sampler keeps the 16 busiest hosts of each pipe per sample, so its file and its cost stay bounded with thousands of connections. \"Show the other hosts\" lists every host of the newest 10 s.",
   "mixup": "A grouped host is not slowed down or treated differently: grouping is only how the page draws it.",
-  "example": "With 6 drawn and 9 hosts busy, the chart shows 6 hosts plus \"All other hosts (3)\"; opening the row lists the 3 with their rate.",
+  "example": "With 8 drawn and 11 hosts busy, the chart shows 8 colours plus \"3 other hosts\"; the table row \"Show the 3 other hosts\" lists them with their rate.",
   "source": {
    "url": "https://man.freebsd.org/cgi/man.cgi?query=pfctl&sektion=8",
    "quote": "Show the contents of the state table."

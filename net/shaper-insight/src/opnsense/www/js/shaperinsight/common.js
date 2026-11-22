@@ -358,9 +358,47 @@ window.SA = (function () {
         return colour ? '<span class="sa-swatch" style="background:' + esc(colour) + '" aria-hidden="true"></span>' : '';
     }
 
+    /* an IPv4 address (with an optional /prefix) inside cell text never breaks: wrap it in .sa-nw.
+       Text nodes only, so a title attribute that holds an address stays as it is. */
+    const IPV4_RE = /\b\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?\b/g;
+    function nowrapIPv4(html) {
+        IPV4_RE.lastIndex = 0;
+        if (typeof html !== 'string' || !IPV4_RE.test(html)) {
+            return html;
+        }
+        const box = document.createElement('div');
+        box.innerHTML = html;
+        const texts = [];
+        const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+            if (!n.parentElement.closest('.sa-nw')) {
+                texts.push(n);
+            }
+        }
+        texts.forEach(function (n) {
+            const parts = n.nodeValue.split(/(\b\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?\b)/);
+            if (parts.length < 2) {
+                return;
+            }
+            const frag = document.createDocumentFragment();
+            parts.forEach(function (part, k) {
+                if (k % 2) {
+                    const span = document.createElement('span');
+                    span.className = 'sa-nw';
+                    span.textContent = part;
+                    frag.appendChild(span);
+                } else if (part) {
+                    frag.appendChild(document.createTextNode(part));
+                }
+            });
+            n.parentNode.replaceChild(frag, n);
+        });
+        return box.innerHTML;
+    }
+
     function columnDef(c) {
         const d = {title: c.title, field: c.field, headerSort: c.sort !== false, vertAlign: 'middle',
-            minWidth: c.minWidth || 48, resizable: false, headerWordWrap: true, variableHeight: true,
+            minWidth: c.minWidth || (c.type === 'ip' ? 112 : (c.field === 'rate' ? 100 : 56)), widthGrow: c.grow || (c.type === 'html' || !c.type ? 2 : 1), resizable: false, headerWordWrap: true, variableHeight: true,
             /* wide: hidden on a phone (767 px or less), where the row shows it as a second line instead */
             visible: !(c.wide && window.matchMedia && window.matchMedia('(max-width: 767px)').matches)};
         let show;
@@ -374,7 +412,10 @@ window.SA = (function () {
             };
         } else if (c.type === 'ip') {
             d.sorter = function (a, b) { return window.SAip ? SAip.compare(a, b) : natural(a, b); };
-            show = function (v) { return esc(v || ''); };
+            /* IPv4 never breaks; IPv6 may break anywhere (it has no spaces) */
+            show = function (v) {
+                return v ? '<span class="' + (String(v).indexOf(':') >= 0 ? 'sa-v6' : 'sa-nw') + '">' + esc(v) + '</span>' : '';
+            };
         } else if (c.type === 'html') {
             d.sorter = function (a, b) { return natural(textOf(a), textOf(b)); };
             show = function (v) { return v || ''; };
@@ -391,7 +432,11 @@ window.SA = (function () {
         }
         d.formatter = function (cell) {
             const row = cell.getRow().getData();
-            return (c.swatch ? swatch(row.colour) : '') + show(cell.getValue(), row);
+            const out = show(cell.getValue(), row);
+            /* one wrapper: vertAlign makes the cell a flex box, and every loose text node or chip would
+               become its own flex column (a verdict sentence split into narrow columns, 1.0.h) */
+            return '<div class="sa-cell">' + (c.swatch ? swatch(row.colour) : '') +
+                (c.type === 'ip' || c.type === 'num' ? out : nowrapIPv4(out)) + '</div>';
         };
         return d;
     }
@@ -456,9 +501,9 @@ window.SA = (function () {
         const sort = tableSorts[id] || (opts.sort ? [{column: opts.sort[0], dir: opts.sort[1]}] : []);
         const tree = !!opts.tree || rows.some(function (r) { return r._children && r._children.length; });
         const t = new Tabulator(node, {
-            /* narrow (phone): columns share the width and their text wraps, so the page does not scroll
-               sideways (390 px); wide: each column as wide as its data, the table no wider than that */
-            data: rows, columns: columns.map(columnDef), layout: node.clientWidth < 700 ? 'fitColumns' : 'fitDataTable', initialSort: sort,
+            /* the columns share the container's width and their text wraps (words whole), so no table is
+               wider than the page (1.0.h sized tables to their longest verdict); text columns get twice the share of numbers */
+            data: rows, columns: columns.map(columnDef), layout: 'fitColumns', initialSort: sort,
             placeholder: opts.empty || 'Nothing to show.', dataTree: tree, dataTreeStartExpanded: false,
             dataTreeChildIndent: 14,
             dataTreeExpandElement: '<button type="button" class="sa-tree" aria-expanded="false" aria-label="Show the grouped rows">+</button>',

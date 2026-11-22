@@ -208,6 +208,97 @@ class NewestStep(unittest.TestCase):
             self.assertEqual(self.s.hosts_shown(), 8)
 
 
+DELTA_JS = os.path.join(SRC, 'www', 'js', 'shaperinsight', 'delta.js')
+
+
+def fake_history(start, n, step=10, window=3600, hosts=('a', 'b', ''), gap=()):
+    """ a history answer shaped as sampler.history() makes it: row k is stamped start + k * step;
+    row values encode their own stamp so a merge can be checked row by row """
+    def col(f=1):
+        return [None if start + k * step in gap else (start + k * step) * f for k in range(n)]
+    pipes = {'10000': {'start': start, 'step': step, 'series': {'bytes': col(), 'drops': col(0)},
+                       'max_bits': col(), 'cap_rows': col(0), 'tin_series': {'t0b': col(), 't1b': col()}, 'above_cap': 0},
+             '10001': {'start': start, 'step': step, 'series': {'bytes': col(2), 'drops': col(0)},
+                       'max_bits': col(2), 'cap_rows': col(0), 'above_cap': 0}}
+    return {'window': window, 'step': step, 'pipes': pipes, 'delta': False,
+            'hosts': {p: [[h, col(3)] for h in hosts] for p in pipes}, 'hosts_offered': {p: col(4) for p in pipes}}
+
+
+def node_merge(old, new):
+    code = ("const m = require(%s); const a = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+            "console.log(JSON.stringify(m.merge(a[0], a[1])));") % json.dumps(DELTA_JS)
+    out = subprocess.run(['node', '-e', code], input=json.dumps([old, new]), capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+class IncrementalHistory(unittest.TestCase):
+    """ ?since= polling: the server sends the rows from two steps before since; the page merges them """
+    def setUp(self):
+        import sampler
+        self.s = sampler
+
+    def test_delta_sends_only_new_rows(self):
+        full = fake_history(1000, 360)
+        last = 1000 + 359 * 10
+        d = self.s.delta(fake_history(1010, 360), last - 10)
+        self.assertTrue(d['delta'])
+        self.assertEqual(d['from'], last - 20)
+        self.assertEqual(d['pipes']['10000']['series']['bytes'], [last - 20, last - 10, last, last + 10])
+        self.assertEqual(len(d['hosts']['10000'][0][1]), 4)
+        self.assertEqual(len(d['pipes']['10000']['tin_series']['t1b']), 4)
+        self.assertLess(len(json.dumps(d)), len(json.dumps(full)) / 20)
+
+    def test_since_off_the_step_grid(self):
+        # a client stamp between two RRD rows counts as the row it falls in (clock vs RRD step boundary)
+        a = self.s.delta(fake_history(1000, 360), 1000 + 300 * 10 + 7.5)
+        b = self.s.delta(fake_history(1000, 360), 1000 + 300 * 10)
+        self.assertEqual(a['from'], b['from'])
+        self.assertEqual(a['pipes']['10000']['series']['bytes'][0], 1000 + 299 * 10)
+
+    def test_full_when_since_left_the_window_or_grids_differ(self):
+        self.assertFalse(self.s.delta(fake_history(5000, 360), 4000)['delta'])     # gap too long
+        self.assertFalse(self.s.delta(fake_history(1000, 360), 'x')['delta'])
+        f = fake_history(1000, 360)
+        f['pipes']['10001']['start'] = 1010                                         # pipes not on one grid
+        self.assertFalse(self.s.delta(f, 3000)['delta'])
+
+    @unittest.skipUnless(shutil.which('node'), 'node not installed')
+    def test_page_merge_equals_full_answer(self):
+        old = fake_history(1000, 360)
+        new_full = fake_history(1030, 360)            # three steps later
+        d = self.s.delta(new_full, 1000 + 359 * 10)
+        m = node_merge(old, d)
+        for n in ('10000', '10001'):
+            self.assertEqual(m['pipes'][n]['start'], 1030)
+            self.assertEqual(m['pipes'][n]['series'], new_full['pipes'][n]['series'])
+            self.assertEqual(m['pipes'][n]['max_bits'], new_full['pipes'][n]['max_bits'])
+        self.assertEqual(m['pipes']['10000']['tin_series'], new_full['pipes']['10000']['tin_series'])
+        self.assertEqual(m['hosts'], new_full['hosts'])
+        self.assertEqual(m['hosts_offered'], new_full['hosts_offered'])
+
+    @unittest.skipUnless(shutil.which('node'), 'node not installed')
+    def test_sampler_restart_mid_window(self):
+        # the sampler was down for 5 steps: those rows are empty in the RRD, before and after the merge
+        gap = {1000 + k * 10 for k in range(350, 355)}
+        old = fake_history(1000, 352, gap=gap)        # polled while it was down: trailing rows not there yet
+        new_full = fake_history(1020, 360, gap=gap)   # back up, the window moved on two steps
+        m = node_merge(old, self.s.delta(new_full, 1000 + 351 * 10))
+        self.assertEqual(m['pipes']['10000']['start'], 1020)
+        self.assertEqual(m['pipes']['10000']['series']['bytes'], new_full['pipes']['10000']['series']['bytes'])
+        self.assertIsNone(m['pipes']['10000']['series']['bytes'][350])
+
+    @unittest.skipUnless(shutil.which('node'), 'node not installed')
+    def test_page_asks_for_everything_when_it_cannot_merge(self):
+        old = fake_history(1000, 360)
+        d = self.s.delta(fake_history(1010, 360, hosts=('a', 'c', '')), 1000 + 359 * 10)
+        self.assertIsNone(node_merge(old, d))                                       # other coloured hosts
+        d = self.s.delta(fake_history(1010, 360), 1000 + 359 * 10)
+        self.assertIsNone(node_merge(dict(old, window=600), d))                     # window changed
+        d2 = dict(d, pipes={'10000': d['pipes']['10000']})
+        self.assertIsNone(node_merge(old, d2))                                      # a pipe went away
+        self.assertIsNone(node_merge(None, d))                                      # nothing to merge into
+
+
 class TablesInPages(unittest.TestCase):
     """ every table is SA.table (core's Tabulator) unless it is a form, with the reason in data-sa-form """
     VIEWS = os.path.join(SRC, 'mvc', 'app', 'views', 'OPNsense', 'ShaperInsight')

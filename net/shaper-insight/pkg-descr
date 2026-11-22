@@ -31,6 +31,15 @@ os-cake is optional: it is detected at runtime.
 Plugin Changelog
 ================
 
+1.0.i
+
+* Tables fit the page: columns share the width and wrap; a table
+  that still needs room scrolls in its own box
+* Phones: host name over IP and manufacturer, secondary columns
+  hidden; IPv4 addresses never break
+* Dashboard: the badge and the summary agree, and a warning says
+  what it is about ("both pipes", "all N pipes")
+
 1.0.h
 
 * "Limiting now" needs the pipe near its cap in 2 of the last 3

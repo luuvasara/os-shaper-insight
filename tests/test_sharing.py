@@ -664,5 +664,30 @@ class SchedulerTerms(unittest.TestCase):
         self.assertIn('Chosen in your pipe settings', p['sched_why'])
 
 
+class SummaryWords(unittest.TestCase):
+    """ the dashboard's badge and its sentence agree (review 2026-11-22) """
+    def setUp(self):
+        from lib import analysis
+        self.a = analysis
+
+    def test_counts_in_words(self):
+        self.assertEqual(self.a.cake_ok_text(2, 0), '{{term:cake}} is running on both pipes that have a CAKE entry.')
+        self.assertIn('on the pipe that has a CAKE entry', self.a.cake_ok_text(1, 0))
+        self.assertIn('on all 3 pipes', self.a.cake_ok_text(3, 0))
+        self.assertIn('(1 other active pipe uses its own scheduler', self.a.cake_ok_text(2, 1))
+        self.assertIn('(2 other active pipes use their own scheduler', self.a.cake_ok_text(2, 2))
+
+    def test_a_warning_is_named(self):
+        t = self.a.cake_ok_text(2, 0, {'number': '10002', 'text': 'Disabled in the configuration but still in the {{term:kernel|kernel}}.'})
+        self.assertIn('{n} needs a look: pipe 10002: Disabled in the configuration but still in the kernel.', t)
+        # a bare term is kept for the renderer, never dropped to an empty word
+        t = self.a.cake_ok_text(2, 0, {'number': '7', 'text': 'Runs without {{term:cake}}.'})
+        self.assertIn('Runs without {{term:cake}}.', t)
+
+    def test_badge_matches_words(self):
+        """ ok badge: no "needs a look"; a warning names it """
+        self.assertNotIn('look', self.a.cake_ok_text(2, 0))
+
+
 if __name__ == '__main__':
     unittest.main()

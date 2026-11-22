@@ -26,6 +26,7 @@
 <link rel="stylesheet" href="{{ cache_safe('/ui/css/shaperinsight/shaperinsight.css') }}">
 <script src="{{ cache_safe('/ui/js/shaperinsight/ipcompare.js') }}"></script>
 <script src="{{ cache_safe('/ui/js/shaperinsight/verdicts.js') }}"></script>
+<script src="{{ cache_safe('/ui/js/shaperinsight/delta.js') }}"></script>
 <script src="{{ cache_safe('/ui/js/shaperinsight/common.js') }}"></script>
 <script src="{{ cache_safe('/ui/js/chart.umd.min.js') }}"></script>
 <script>
@@ -205,9 +206,10 @@ $(document).ready(function () {
             '<span class="sa-muted" title="{{ lang._("Locally administered MAC: a phone or laptop with private Wi-Fi addresses, a virtual machine or a container. The IEEE list names no maker for it.") }}">{{ lang._("private (random) MAC") }}</span>' : '');
         return {colour: hostColour(n, ip), ip: fw ? '' : ip, rate: v, share: total ? Math.round(1000 * v / total) / 10 : null,
             sortName: nm, find: [nm, ip, info.mac || '', info.vendor || ''].join(' ').toLowerCase(),
-            name: (nm ? '<span class="sa-name" title="' + SA.esc(nm + (fw ? '' : ' (' + ip + ')')) + '"><bdi>' + SA.esc(nm) + '</bdi></span>' :
+            name: '<div class="sa-hostcell">' + (nm ? '<span class="sa-name" title="' + SA.esc(nm + (fw ? '' : ' (' + ip + ')')) + '"><bdi>' + SA.esc(nm) + '</bdi></span>' :
                 '<span class="sa-muted">{{ lang._("no name") }}</span>') +
-                '<span class="sa-sub">' + SA.esc(fw ? '' : ip) + (info.vendor ? ' · ' + SA.esc(info.vendor) : '') + '</span>',
+                '<span class="sa-sub">' + (fw ? '' : '<span class="' + (ip.indexOf(':') >= 0 ? 'sa-v6' : 'sa-nw') + '">' + SA.esc(ip) + '</span>') +
+                (info.vendor ? ' · ' + SA.esc(info.vendor) : '') + '</span></div>',
             mac: info.mac ? SA.esc(info.mac) + (shared ? ' <span class="sa-muted" title="' + SA.esc([ip].concat(info.shared).join(', ')) +
                 '">{{ lang._("shared") }} ×' + (shared + 1) + '</span>' : '') : '',
             vendor: maker, cls: classOf(ip, aliasInfo)};
@@ -265,7 +267,7 @@ $(document).ready(function () {
             (st.list.total > st.list.hosts.length ? ' ({{ lang._("the busiest") }} ' + st.list.hosts.length + ' {{ lang._("listed; search to find the others") }})' : '') : ''));
         const cols = [{title: '{{ lang._("Name") }}', field: 'name', type: 'html', swatch: true, sortField: 'sortName'},
             {title: '{{ lang._("IP") }}', field: 'ip', type: 'ip', wide: true},
-            {title: '{{ lang._("MAC") }}', field: 'mac', type: 'html', wide: true},
+            {title: '{{ lang._("MAC") }}', field: 'mac', type: 'html', wide: true, minWidth: 140},
             {title: '{{ lang._("Manufacturer") }}', field: 'vendor', type: 'html', wide: true}];
         if (P.diffserv === 1 || P.diffserv === 2) {
             cols.push({title: '{{ lang._("Class (tin)") }}', field: 'cls', type: 'html', wide: true});
@@ -478,9 +480,9 @@ $(document).ready(function () {
             SA.table('#' + box + '-tintable', [
                 {title: '{{ lang._("Class") }}', field: 'name', swatch: true},
                 {title: '{{ lang._("Rate") }}', field: 'rate', type: 'num', fmt: function (v) { return SA.rate(v); }},
-                {title: '{{ lang._("Drops/s") }}', field: 'drops', type: 'num', fmt: function (v) { return v.toFixed(1); }},
-                {title: '{{ lang._("ECN marks/s") }}', field: 'marks', type: 'num', fmt: function (v) { return v.toFixed(1); }},
-                {title: '{{ lang._("Waiting (packets)") }}', field: 'backlog', type: 'num', fmt: function (v) { return SA.num(v); }}
+                {title: '{{ lang._("Drops/s") }}', field: 'drops', type: 'num', minWidth: 76, fmt: function (v) { return v.toFixed(1); }},
+                {title: '{{ lang._("ECN marks/s") }}', field: 'marks', type: 'num', minWidth: 76, fmt: function (v) { return v.toFixed(1); }},
+                {title: '{{ lang._("Waiting (packets)") }}', field: 'backlog', type: 'num', wide: true, fmt: function (v) { return SA.num(v); }}
             ], lt.length === tins.length ? tins.map(function (name, k) {
                 const x = lt[k];
                 return {colour: 'tin-' + k, name: name, rate: x[0] * 8 / stepS, drops: x[1] / stepS,
@@ -533,12 +535,28 @@ $(document).ready(function () {
         document.body.setAttribute('data-sa-ready', '1');
     }
 
+    /* incremental polling: after a full answer only the new rows are asked for (?since=); everything again
+       after an error, a window change, a gap of more than a minute, or when the rows cannot be merged */
+    let cached = null;
+    let cachedAt = 0;
     function load() {
         loadExtra();
-        return SA.get('/api/shaperinsight/sampler/history/' + windowS).then(function (d) {
+        const url = '/api/shaperinsight/sampler/history/' + windowS;
+        const last = cached && cached.window === windowS && Date.now() - cachedAt < 60000 ? SAdelta.lastRow(cached) : null;
+        return SA.get(url + (last !== null ? '?since=' + last : '')).then(function (d) {
+            let m = SAdelta.merge(cached, d);
+            if (m === null) {
+                cached = null;
+                return SA.get(url).then(function (f) { return f; });
+            }
+            return m;
+        }).then(function (d) {
+            cached = d;
+            cachedAt = Date.now();
             $('#sa-shown').val(String(d.hosts_shown || 8));
             render(d);
         }, function (e) {
+            cached = null;
             $('#sa-sampler').html(SA.badge('bad', '{{ lang._("Not available") }}') + ' ' + SA.esc(e.message) +
                 ' <span class="sa-meta">{{ lang._("This page needs the full Firewall: Shaper: Shaper Insight privilege: it lists local addresses with their traffic.") }}</span>');
             document.body.setAttribute('data-sa-ready', '1');
@@ -547,6 +565,7 @@ $(document).ready(function () {
 
     $('#sa-window').on('change', function () {
         windowS = parseInt($(this).val(), 10);
+        cached = null;
         Object.keys(charts).forEach(function (k) { charts[k].destroy(); delete charts[k]; });
         $('#sa-pipes').empty();
         if (poller) { poller.now(); }

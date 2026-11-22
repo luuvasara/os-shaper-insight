@@ -51,10 +51,10 @@ $(document).ready(function () {
                     '" data-class="' + c + '" data-descr="' + esc(label) + '">' + (c === 'interactive' ? 'Interactive' : 'Background') + '</button>';
             }).join(' ');
     }
-    const DEV_COLS = [{title: 'Name', field: 'name'}, {title: 'IP', field: 'ip', type: 'ip'}, {title: 'MAC', field: 'mac'},
-        {title: 'Manufacturer', field: 'vendor'}, {title: 'Known from', field: 'source'}, {title: 'Add as', field: 'add', type: 'html', sort: false}];
+    const DEV_COLS = [{title: 'Name', field: 'name'}, {title: 'IP', field: 'ip', type: 'ip'}, {title: 'MAC', field: 'mac', wide: true, minWidth: 140},
+        {title: 'Manufacturer', field: 'vendor', wide: true}, {title: 'Known from', field: 'source', wide: true}, {title: 'Add as', field: 'add', type: 'html', sort: false, minWidth: 100}];
     const ALIAS_COLS = [{title: 'Alias', field: 'alias', type: 'html'}, {title: 'Type', field: 'type'},
-        {title: 'Content', field: 'content'}, {title: 'Add as', field: 'add', type: 'html', sort: false}];
+        {title: 'Content', field: 'content', minWidth: 120}, {title: 'Add as', field: 'add', type: 'html', sort: false, minWidth: 100}];
     function loadDevices() {
         ajaxGet('/api/shaperinsight/priorities/search_item/', {rowCount: -1}, function (rows) {
             if (!rows || !Array.isArray(rows.rows)) {
@@ -130,7 +130,7 @@ $(document).ready(function () {
             $('#sa-prio-head').html(html);
             SA.table('#sa-prio-classes', [
                 {title: 'Priority', field: 'cls', type: 'html'}, {title: 'What it does', field: 'what'},
-                {title: 'Devices now', field: 'members', type: 'html'},
+                {title: 'Devices now', field: 'members', type: 'html', minWidth: 120},
                 {title: 'Marked so far', field: 'bytes', type: 'num', fmt: function (v) { return v === null ? 'not loaded' : (v / 1e6).toFixed(1) + ' MB'; }}
             ], (d.classes || []).map(function (c) {
                 const mine = (d.rules || []).filter(function (r) { return r.rule.indexOf('setdscp ' + c.dscp + ' ') === 0; });

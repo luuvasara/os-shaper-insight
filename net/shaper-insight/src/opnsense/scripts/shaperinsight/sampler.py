@@ -897,7 +897,49 @@ def priorities_set():
     return out
 
 
-def history(window):
+OVERLAP = 2        # rows a delta repeats before ?since=: the newest row may still change at the next update
+
+
+def cut_rows(arr, k):
+    return arr[k:] if isinstance(arr, list) else arr
+
+
+def delta(full, since):
+    """ the rows of a history answer from (since - OVERLAP steps) on, for a client that has the rest
+    (incremental polling; payload per poll measured in TESTING.md). The client replaces its rows from
+    'from' on. A full answer comes back (delta false) when since is outside the window, or the rows have
+    no common start: after a window change, a long gap or a sampler restart the client gets everything. """
+    try:
+        since = float(since)
+    except (TypeError, ValueError):
+        return full
+    step = full.get('step')
+    pipes = full.get('pipes') or {}
+    starts = {e['start'] for e in pipes.values()}
+    if not step or not pipes or len(starts) != 1 or any(e.get('step') != step for e in pipes.values()):
+        return full
+    start = starts.pop()
+    since = since - since % step          # a client stamp off the RRD grid counts as the row it falls in
+    k = int((since - start) // step) - OVERLAP + 1
+    if since < start or k < 1:
+        return full                       # not in this window any more: the client needs everything
+    out = dict(full, delta=True, since=since, **{'from': start + k * step})
+    out['pipes'] = {}
+    for n, e in pipes.items():
+        e = dict(e, series={x: cut_rows(v, k) for x, v in e['series'].items()},
+                 max_bits=cut_rows(e.get('max_bits'), k), cap_rows=cut_rows(e.get('cap_rows'), k))
+        if 'tin_series' in e:
+            e['tin_series'] = {x: cut_rows(v, k) for x, v in e['tin_series'].items()}
+        e['start'] = start + k * step
+        out['pipes'][n] = e
+    # host rows share the pipes' grid; the coloured set is sent by name so the client can tell whether
+    # its own still matches (top hosts change: then it asks for everything)
+    out['hosts'] = {p: [[h, cut_rows(a, k)] for h, a in v] for p, v in (full.get('hosts') or {}).items()}
+    out['hosts_offered'] = {p: cut_rows(a, k) for p, a in (full.get('hosts_offered') or {}).items()}
+    return out
+
+
+def history(window, since=None):
     window = max(60, min(int(window), 365 * 86400))
     now = time.time()
     step = choose_step(window)
@@ -940,14 +982,15 @@ def history(window):
         hosts, first, offered = host_series(row0, step, n,
                                             {k: v['series'].get('bytes') for k, v in pipes.items()}, shown)
     st = run_state()
-    return {'status': 'ok' if meta else 'off', 'now': now, 'window': window, 'step': step, 'pipes': pipes,
+    full = {'status': 'ok' if meta else 'off', 'now': now, 'window': window, 'step': step, 'pipes': pipes,
             'hosts': hosts, 'hosts_offered': offered, 'hosts_shown': shown,
             # the expander's numbers ("Show the M other hosts · K sending now"); the rows come from newest
             'hosts_other': hosts_other(hosts, host_series.grouped, nd),
             'hosts_stored': TOP, 'hosts_since': first, 'hosts_keep_s': HOSTS_KEEP * STEP,
             'running': st == 'running', 'state': st, 'enabled': enabled(), 'cost': meta.get('cost', {}),
             'priorities': prio, 'watchdog': watchdog_info(),
-            'started': meta.get('started'), 'written': meta.get('written')}
+            'started': meta.get('started'), 'written': meta.get('written'), 'delta': False}
+    return delta(full, since) if since is not None else full
 
 
 # ------------------------------------------------------------------ process control
@@ -1104,7 +1147,8 @@ if __name__ == '__main__':
         sys.exit(0)
     try:
         if cmd == 'history':
-            result = history(sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].isdigit() else 3600)
+            since = sys.argv[3] if len(sys.argv) > 3 and re.fullmatch(r'[0-9]{1,12}(\.[0-9]{1,6})?', sys.argv[3]) else None
+            result = history(sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].isdigit() else 3600, since)
         elif cmd == 'newest':
             a = (sys.argv[2:] + ['', '', '', '', ''])[:5]
             result = newest(a[0] if a[0].isdigit() else '', a[1] if re.fullmatch(r'[0-9A-Fa-f:.]{1,64}', a[1]) else '',

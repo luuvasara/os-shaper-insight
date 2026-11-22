@@ -28,7 +28,7 @@
  *   - sorts: at least one sortable header, and every sortable header is keyboard-reachable
  *     (tabindex 0) and carries aria-sort; pressing Enter on it changes the order of the rows;
  *   - has an empty state (Tabulator placeholder text) when there are no rows;
- *   - fits 390 px: no horizontal page scroll at 390x844;
+ *   - fits: no horizontal page scroll at 1920 or 390, no table wider than its box, IPv4 on one line;
  *   - shows a swatch in rows the page says have a chart series (data-sa-swatch tables);
  *   - links object names the core way (an .sa-ref with a tooltip; a link icon with an accessible name).
  * A plain <table> is a FAIL unless it carries data-sa-form="<why>" (an input form, where sorting would
@@ -66,6 +66,7 @@ const { chromium } = require('playwright-core');
                 await page.evaluate(() => document.querySelectorAll('.tabulator-col').forEach((h) => {
                     h.removeAttribute('tabindex'); h.removeAttribute('aria-sort'); h.classList.remove('tabulator-sortable');
                 }));
+                await page.evaluate(() => document.querySelectorAll('.sa-nw').forEach((e) => e.classList.remove('sa-nw')));
             }
             const r = await page.evaluate(() => {
                 const out = { grids: 0, issues: [], scroll: document.documentElement.scrollWidth - window.innerWidth };
@@ -95,6 +96,22 @@ const { chromium } = require('playwright-core');
                     if (g.hasAttribute('data-sa-swatch') && rows && !g.querySelector('.tabulator-row .sa-swatch')) {
                         out.issues.push(id + ': rows have chart series but no swatch');
                     }
+                    // fits its box: never wider than its container (1.0.h was not); a table that needs
+                    // more room scrolls inside its own holder, not the page
+                    if (g.offsetWidth > g.parentElement.clientWidth + 1) {
+                        out.issues.push(id + ': ' + g.offsetWidth + ' px wide in a ' + g.parentElement.clientWidth + ' px box');
+                    }
+                    // nothing is cut off: a cell's content fits the cell (a nowrap rate in a narrow column was clipped)
+                    const cut = [...g.querySelectorAll('.tabulator-row .tabulator-cell')].find((c) => c.offsetParent && c.scrollWidth > c.clientWidth + 1);
+                    if (cut) { out.issues.push(id + ': cell "' + cut.textContent.trim().slice(0, 30) + '" cut off (' + cut.scrollWidth + ' > ' + cut.clientWidth + ' px)'); }
+                    // an IPv4 address never breaks: every one sits in .sa-nw and renders on one line
+                    const walker = document.createTreeWalker(g, NodeFilter.SHOW_TEXT);
+                    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+                        if (!/\b\d{1,3}(\.\d{1,3}){3}\b/.test(n.nodeValue) || !n.parentElement.offsetParent) { continue; }
+                        const nw = n.parentElement.closest('.sa-nw, .tabulator-col, [title]');
+                        if (!nw || !nw.classList.contains('sa-nw')) { out.issues.push(id + ': IPv4 "' + n.nodeValue.trim().slice(0, 40) + '" may break'); break; }
+                        if (nw.getClientRects().length > 1) { out.issues.push(id + ': IPv4 broken over lines'); break; }
+                    }
                     g.querySelectorAll('.sa-ref').forEach((ref) => {
                         if (!ref.getAttribute('title') && !ref.getAttribute('data-original-title')) { out.issues.push(id + ': link name without hover content'); }
                     });
@@ -106,7 +123,7 @@ const { chromium } = require('playwright-core');
             });
             counted = Math.max(counted, r.grids);
             r.issues.forEach((x) => problems.push(vp.width + ': ' + x));
-            if (vp.width === 390 && r.scroll > 1) { problems.push('390: page scrolls sideways by ' + r.scroll + ' px'); }
+            if (r.scroll > 1) { problems.push(vp.width + ': page scrolls sideways by ' + r.scroll + ' px'); }
             // Enter on the first sortable header of the first multi-row grid must change the sort state
             if (vp.width === 1920) {
                 const moved = await page.evaluate(async () => {

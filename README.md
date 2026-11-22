@@ -16,7 +16,7 @@ Earlier name: os-shaper-assistant (used only for early test installs until 2026-
 
 ## Screenshots
 
-All taken on the lab VM (version 1.0.h; the addresses are lab and documentation addresses), at
+All taken on the lab VM (versions 1.0.h and 1.0.i; the addresses are lab and documentation addresses), at
 1920x1080 unless noted; tall pages are cropped to their top part.
 
 **Sharing: who uses each pipe.** Each host's rate stacked under the pipe's real payload cap,
@@ -104,8 +104,8 @@ What it only reads:
   `/var/db/rrd` (`pipeN-shaper.rrd`, `pipeN-tins-shaper.rrd`; 10 s for 6 hours, 1 minute for 3
   days, 10 minutes for 30 days, 1 hour for a year; about 1.9 + 1.3 MB per CAKE pipe with four
   tins), which survive reboots; Reporting › Health lists them under "shaper". Hosts are kept for
-  6 hours in `/var/run/shaperinsight/hosts.jsonl` (top 16 per pipe and step; the page draws 3 to 8
-  of them, setting "Hosts drawn", and groups the rest), not in RRDs: an RRD
+  6 hours in `/var/run/shaperinsight/hosts.jsonl` (top 16 per pipe and step; the page colours 3 to 8
+  of them, setting "Hosts drawn", 8 by default, and groups the rest), not in RRDs: an RRD
   has a fixed set of series and the busiest hosts keep changing. It runs as a service
   (`daemon(8)`, System › Diagnostics › Services lists it), starts at boot and on install, and
   stops on uninstall; its RRD files stay, like core's. Cost, measured on a 4-core lab VM: idle
@@ -164,9 +164,9 @@ built from that tag and its SHA-256. The package is not signed; check the hash. 
 OPNsense 26.7 (amd64).
 
 ```sh
-fetch https://github.com/luuvasara/os-shaper-insight/releases/download/v1.0.h/os-shaper-insight-devel-1.0.h.pkg
-sha256 -q os-shaper-insight-devel-1.0.h.pkg   # compare with SHA256SUMS on the release page
-pkg add os-shaper-insight-devel-1.0.h.pkg
+fetch https://github.com/luuvasara/os-shaper-insight/releases/download/v1.0.i/os-shaper-insight-devel-1.0.i.pkg
+sha256 -q os-shaper-insight-devel-1.0.i.pkg   # compare with SHA256SUMS on the release page
+pkg add os-shaper-insight-devel-1.0.i.pkg
 ```
 
 Updates are manual: install the next release's package the same way. Removal: see "Remove".

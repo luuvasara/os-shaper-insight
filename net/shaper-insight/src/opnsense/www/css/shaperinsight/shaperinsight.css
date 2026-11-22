@@ -207,7 +207,11 @@
 .sa-grid { margin-bottom: 12px; font-size: inherit; }
 .sa-grid .tabulator-col[tabindex="0"]:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .sa-grid .tabulator-placeholder-contents { white-space: normal !important; padding: 12px !important; }
-.sa-grid .tabulator-cell { white-space: normal; overflow-wrap: anywhere; }
+.sa-grid .tabulator-cell { white-space: normal; overflow-wrap: break-word; }
+.sa-nw { white-space: nowrap; }
+/* the cell's single flex child: takes the cell's width so its text wraps as one paragraph */
+.sa-grid .sa-cell { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+.sa-v6 { overflow-wrap: anywhere; }
 /* core's Tabulator CSS greys the empty-state text below 4.5:1; use the page's text colour */
 .sa-grid .tabulator-placeholder-contents { color: inherit !important; font-weight: normal !important; font-size: inherit !important; }
 .sa-grid .tabulator-col-title { white-space: normal; }
@@ -217,7 +221,7 @@
 .sa-name { display: inline-block; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .sa-muted { font-style: italic; }
 .sa-sub { display: none; }
-.sa-grid .tabulator-cell[tabulator-field="ip"], .sa-grid .tabulator-cell[tabulator-field="mac"] { overflow-wrap: anywhere; text-overflow: clip; }
+.sa-grid .tabulator-cell[tabulator-field="ip"], .sa-grid .tabulator-cell[tabulator-field="mac"] { text-overflow: clip; }
 .sa-hatch { background: repeating-linear-gradient(135deg, #deddd6 0 2px, #8a8983 2px 3.5px); }
 .sa-legend { list-style: none; padding: 0; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .sa-legend li { display: inline-flex; align-items: center; }
@@ -225,7 +229,7 @@
 .sa-find input { max-width: 260px; }
 @media (max-width: 767px) {
     .sa-name { max-width: 20ch; }
-    .sa-sub { display: block; font-size: 0.9em; overflow-wrap: anywhere; }
+    .sa-sub { display: block; font-size: 0.9em; }
 }
 /* no side borders: Tabulator fits the columns to the element's width, and a 1 px border each side of the
    scroll box (core's theme) made the table 2 px wider than the box (a sideways scroll at 390 px) */
@@ -239,3 +243,7 @@
 /* room for the sort arrow in every sortable header, so a right-aligned title (Rate, Share) never runs
    under it (core's theme drops Tabulator's own padding) */
 .sa-grid .tabulator-col.tabulator-sortable .tabulator-col-title { padding-right: 18px !important; box-sizing: border-box; }
+/* a number and its unit stay on one line; a host cell stacks the name over "IP · maker" on a phone */
+.sa-grid .tabulator-cell[tabulator-field="rate"], .sa-grid .tabulator-cell[tabulator-field="share"] { white-space: nowrap; }
+.sa-hostcell { display: inline-block; vertical-align: middle; min-width: 0; }
+.sa-muted { white-space: nowrap; }
