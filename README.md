@@ -289,8 +289,10 @@ to move but the settings section.
 
 ## Development and tests
 
-All testing was done on a throw-away OPNsense VM on a Linux host, with its own network
-namespaces and bridges and iperf3 endpoints for test traffic. The lab scripts are not part of
+It runs in production on the author's own gateway (bare metal, see `TESTING.md` for what is
+used there and what was measured). Development and the tests of every write path were done on a
+throw-away OPNsense VM on a Linux host, with its own network namespaces and bridges and iperf3
+endpoints for test traffic. The lab scripts are not part of
 this repository because they encode the test host's setup; `TESTING.md` describes the methods
 and results without them. `tools/shots/` takes the screenshots and runs axe-core (`npm install`
 there first; it uses the system Chrome).
@@ -303,8 +305,9 @@ published; `--check` needs nothing else.
 ## How this was made
 
 Most of the code and text was written with the help of frontier AI, directed and reviewed by
-the author, and tested on the lab VM as described in `TESTING.md`. Read it as a proof of
-concept: check what it does on a test firewall before you use it on one you depend on.
+the author, tested on the lab VM and run in production as described in `TESTING.md`. Read it
+as a proof of concept: check what it does on a test firewall before you use it on one you
+depend on.
 
 ## Security and contributing
 
