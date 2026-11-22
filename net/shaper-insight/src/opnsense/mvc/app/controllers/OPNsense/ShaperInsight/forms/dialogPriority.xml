@@ -1,0 +1,30 @@
+<form>
+    <field>
+        <id>priority.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <grid_view>
+            <width>6em</width>
+            <type>boolean</type>
+            <formatter>rowtoggle</formatter>
+        </grid_view>
+    </field>
+    <field>
+        <id>priority.target</id>
+        <label>Device, alias or port</label>
+        <type>text</type>
+        <help>A MAC address keeps working when the device gets a new address (ex. aa:bb:cc:dd:ee:ff); note that containers on ipvlan share their host's MAC, so they all get its priority. An IP address or network (ex. 192.168.1.20 or 192.168.1.32/28), or the name of a host or network alias (ex. work_laptops), also work. A protocol and port (range) marks that traffic from every device, in both directions (ex. udp/51820 for a WireGuard tunnel, tcp+udp/6881-6889 for a file-sharing port).</help>
+    </field>
+    <field>
+        <id>priority.class</id>
+        <label>Priority</label>
+        <type>dropdown</type>
+        <help>Interactive: CAKE's Video class, low delay with priority up to half the line, after that it shares like everyone else (ex. video calls, games). Background: CAKE's Bulk class, it gives way to everything else when the line is full (ex. backups, game downloads). Neither reserves bandwidth: unused capacity is always shared.</help>
+    </field>
+    <field>
+        <id>priority.description</id>
+        <label>Description</label>
+        <type>text</type>
+        <help>Ex. "Living-room console". Shown in this list only.</help>
+    </field>
+</form>

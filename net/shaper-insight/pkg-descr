@@ -1,0 +1,51 @@
+Shaper Insight is a companion to the OPNsense traffic shaper (Firewall: Shaper:
+Shaper Insight). It is not related to Reporting: Insight (NetFlow).
+Earlier name: os-shaper-assistant.
+
+It shows whether the shaper really does what its configuration says:
+which scheduler each pipe runs in the kernel (CAKE through the os-cake
+plugin, or FQ-CoDel), the configuration against what is loaded, settings
+that the chosen scheduler ignores, per-tin CAKE statistics, health checks,
+and the compiled configuration in a form that can be pasted into a forum
+post with public addresses, host names and descriptions redacted.
+
+When you ask it to, it also changes the configuration:
+- Apply writes shaper pipes, queues and rules (and os-cake entries) for
+  your internet links, after showing the exact plan, with a 60 second
+  confirm timer that puts the previous shaper settings back. You can let
+  it disable your own conflicting shaper rules.
+- Remove deletes what it created and switches those rules back on.
+- Priorities load ipfw rules that mark chosen devices, aliases or ports
+  for a CAKE class.
+- A history sampler (on by default, off in the settings) reads the pipe
+  and pf state counters every 10 seconds and keeps fixed-size RRD files
+  in /var/db/rrd (shown in Reporting: Health under "shaper") plus a
+  6 hour per-device file in /var/run. The files stay after uninstall.
+- The bufferbloat test sends traffic to third-party servers you choose.
+
+To take its shaping away, press Remove before uninstalling: uninstalling
+alone leaves your shaper as it is (priorities turn off), and a reinstall
+picks the setup up again.
+os-cake is optional: it is detected at runtime.
+
+Plugin Changelog
+================
+
+1.0.f
+
+* Sharing page: per-device rates under each pipe's payload cap, CAKE
+  drops, marks and delay, per-class rates with the Bulk threshold
+* History sampler with RRD files (10 s for 6 h up to 1 h for a year)
+* Priorities by port (udp/51820, tcp+udp/6881-6889); a warning when one
+  MAC has several addresses (containers sharing the host's MAC)
+* Live rates stamped at the counter read; points above the cap flagged
+* Every scheduler name shown (WF2Q+, QFQ, FIFO, FQ-PIE, DRR, PRIO) has a
+  glossary entry, and each pipe says why it runs its scheduler
+
+1.0.d
+
+* Renamed from os-shaper-assistant; on install, its settings, ledger,
+  restore points and bufferbloat results are moved over once (logged)
+* Objects made under the old name stay the plugin's own; the next Apply
+  renames them in place
+* Mutating configd actions limited to wheel and wwwonly

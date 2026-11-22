@@ -1,0 +1,1089 @@
+{
+ "shaping": {
+  "id": "shaping",
+  "name": "Shaping",
+  "group": "G2",
+  "note": "",
+  "also": [],
+  "say": "shaping delays packets so the stream stays under a set rate; the delay happens in a buffer, so excess packets wait first and are dropped only if the buffer is full.",
+  "people": "\"throttling\", \"limiting\", \"capping my speed\", \"QoS\".",
+  "applies": "at the point where we control the link, on the way out of an interface. A shaper that is not the slowest hop in the path controls nothing, because the queue forms elsewhere.",
+  "example": "shaping download to 92 Mbit/s on a 100 Mbit/s line moves the queue from the ISP's buffer into ours, where CAKE can manage it.",
+  "source_text": "RFC 2475: \"Shapers delay some or all of the packets in a traffic stream in order to bring the stream into compliance with a traffic profile. A shaper usually has a finite-size buffer, and packets may be discarded if there is not sufficient buffer space to hold the delayed packets.\" Also tc-tbf(8) (https://man7.org/linux/man-pages/man8/tc-tbf.8.html): \"TBF is a pure shaper and never schedules traffic. It is non-work-conserving and may throttle itself, although packets are available, to ensure that the configured rate is not exceeded.\"",
+  "urls": [
+   "https://man7.org/linux/man-pages/man8/tc-tbf.8.html",
+   "https://www.rfc-editor.org/rfc/rfc2475.txt"
+  ],
+  "plain": "Holding packets back so the traffic stays under a set rate. Excess packets wait in a queue instead of being thrown away at once.",
+  "mixup": "Not the same as policing, which drops packets above the rate instead of delaying them. \"Throttling\" is an everyday word for either.",
+  "source": {
+   "url": "https://www.rfc-editor.org/rfc/rfc2475.txt",
+   "quote": "Shapers delay some or all of the packets in a traffic stream in order to bring the stream into compliance with a traffic profile."
+  },
+  "ui_example": "Shaping download to 92 Mbit/s on a 100 Mbit/s line moves the waiting line from the provider's box into this firewall, where it can be kept short."
+ },
+ "cake": {
+  "name": "CAKE",
+  "plain": "A scheduler that shares the line fairly per address (usually one per device) and per connection, keeps queues short and can sort traffic into priority tins. On OPNsense it comes from the os-cake plugin.",
+  "mixup": "CAKE does not make the line faster. It keeps delay low while the line is full.",
+  "example": "A laptop with 20 downloads and a phone with 1 each get half of the line with CAKE's host isolation.",
+  "source": {
+   "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/README.md",
+   "quote": "What it adds over FQ-CoDel:"
+  },
+  "id": "cake",
+  "group": "G0"
+ },
+ "fq-codel": {
+  "name": "FQ-CoDel",
+  "plain": "The built-in scheduler that gives each connection its own small queue and drops or marks packets that wait too long.",
+  "mixup": "It is fair per connection, not per device, and it ignores queue weights.",
+  "example": "Default 1024 flow queues and a 5 ms target delay.",
+  "source": {
+   "url": "https://www.rfc-editor.org/rfc/rfc8290.txt",
+   "quote": "FQ-CoDel mixes packets from multiple flows and reduces the impact of head-of-line blocking from bursty traffic."
+  },
+  "id": "fq-codel",
+  "group": "G0"
+ },
+ "scheduler": {
+  "name": "Scheduler",
+  "plain": "The rule that decides which waiting packet leaves next. On a pipe it is set by the Scheduler type field (FQ-CoDel, WF2Q+ ...) or replaced by CAKE.",
+  "mixup": "A scheduler orders packets; the rate limit comes from the pipe's bandwidth.",
+  "example": "dnctl sched show prints \"type CAKE\" or \"type FQ_CODEL\" for each pipe.",
+  "source": {
+   "url": "https://www.rfc-editor.org/rfc/rfc8290.txt",
+   "quote": "Scheduler: A mechanism to select which queue a packet is dequeued from."
+  },
+  "id": "scheduler",
+  "group": "G0"
+ },
+ "pipe": {
+  "name": "Pipe",
+  "plain": "A shaper object with a rate limit (for example 900 Mbit/s) and a scheduler. Traffic reaches it through rules, directly or through a queue.",
+  "mixup": "One pipe per direction and per physical line; several VLANs on one cable share one pipe.",
+  "example": "Pipe 10000: 910 Mbit/s, scheduler FQ-CoDel, used for download.",
+  "source": {
+   "url": "https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8",
+   "quote": "pipes can be used to set hard limits to the bandwidth that a flow can use, whereas queues can be used to determine how different flows share the available bandwidth."
+  },
+  "id": "pipe",
+  "group": "G0"
+ },
+ "queue": {
+  "name": "Queue (shaper object)",
+  "plain": "A shaper object that feeds a pipe. Rules should point at the queue, so the pipe's scheduler (CAKE or FQ-CoDel) sees the traffic.",
+  "mixup": "The shaper's \"queue\" object is a label and a weight; the packets wait inside the pipe's scheduler.",
+  "example": "Queue 10000 on pipe 10000, weight 100.",
+  "source": {
+   "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/README.md",
+   "quote": "Rules that target a pipe itself go through its internal FIFO: the pipe still limits the rate, but CAKE never sees the traffic."
+  },
+  "id": "queue",
+  "group": "G0"
+ },
+ "rule": {
+  "name": "Shaper rule",
+  "plain": "Matches traffic (interface, direction, addresses) and sends it to a queue or pipe. The first matching rule wins.",
+  "mixup": "Shaper rules are separate from firewall rules; they are ipfw rules numbered from 60000.",
+  "example": "Rule on WAN, direction in, target queue 10000: download traffic.",
+  "source": {
+   "url": "https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8",
+   "quote": "When set, the packet exiting from the dummynet pipe or from ng_ipfw(4) node is not passed though the firewall again."
+  },
+  "id": "rule",
+  "group": "G0"
+ },
+ "tin": {
+  "name": "Tin",
+  "plain": "CAKE's priority tier. Packets go into a tin by their DSCP mark; each tin has priority up to a share of the line.",
+  "mixup": "A tin is not a separate speed limit and not strict priority: above its share a tin is served like normal traffic.",
+  "example": "diffserv4: Bulk, Best Effort, Video, Voice. Voice has priority up to a quarter of the line.",
+  "source": {
+   "url": "https://man7.org/linux/man-pages/man8/tc-cake.8.html",
+   "quote": "tin weights have a 'priority sharing' value when bandwidth used by that tin is below a threshold, and a lower 'bandwidth sharing' value when above"
+  },
+  "id": "tin",
+  "group": "G0"
+ },
+ "host-isolation": {
+  "name": "Host isolation (per-address fairness)",
+  "plain": "Sharing the line first between addresses (CAKE calls them hosts), then between each address's connections. Usually that is one share per device, but a device using IPv4 and IPv6 at the same time, or several IPv6 privacy addresses, counts once per address and gets that many shares.",
+  "mixup": "Per-connection fairness (FQ-CoDel) lets a device with many downloads take most of the line. Host isolation is not per device either: a dual-stack device sending over both families gets two shares (lab: 66.5 % instead of 50 %). Priorities picked by MAC are per device.",
+  "example": "dual-srchost on upload, dual-dsthost on download.",
+  "source": {
+   "url": "https://man7.org/linux/man-pages/man8/tc-cake.8.html",
+   "quote": "dual-srchost: Flows are defined by the 5-tuple, and fairness is applied first over source addresses, then over individual flows."
+  },
+  "id": "host-isolation",
+  "group": "G0"
+ },
+ "ecn": {
+  "id": "ecn",
+  "name": "ECN",
+  "group": "G5",
+  "note": "(RFC 3168) versus L4S (RFC 9330)",
+  "also": [],
+  "details": [
+   {
+    "label": "ECN",
+    "text": "a 2-bit IP field that lets a router mark a packet \"Congestion Experienced\" instead of dropping it, for flows that opted in. Signal = \"the queue is building, slow down a bit\". queue, and senders that react in proportion. Signal = \"tiny queue now, adjust smoothly\"."
+   }
+  ],
+  "people": "\"ECN makes it lossless\", \"L4S is just ECN\", \"ECN = QoS priority\".",
+  "applies": "ECN needs both endpoints to support it; a marked packet is not a lost packet. It is not a priority.",
+  "example": "CAKE with ECN on marks a TCP flow's packets when sojourn time passes its target instead of dropping them.",
+  "source_text": "RFC 3168 (https://www.rfc-editor.org/rfc/rfc3168.txt): \"Routers can instead set the Congestion Experienced (CE) codepoint in the IP header of packets from ECN-capable transports.\" and \"If so, then instead of dropping the packet, the router MAY instead set the CE codepoint in the IP header.\" RFC 9330 (https://www.rfc-editor.org/rfc/rfc9330.txt): \"low latency is not provided by the network; low latency results from the careful behaviour of the Scalable congestion controllers used by L4S senders.\" and \"The 'Low Loss' part of the name denotes that L4S generally achieves zero congestion loss due to its use of ECN.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc3168.txt",
+   "https://www.rfc-editor.org/rfc/rfc9330.txt"
+  ],
+  "plain": "A flag a router sets on a packet instead of dropping it, telling the sender to slow down.",
+  "mixup": "A mark is not a priority, and only works when both ends support ECN.",
+  "source": {
+   "url": "https://www.rfc-editor.org/rfc/rfc3168.txt",
+   "quote": "Routers can instead set the Congestion Experienced (CE) codepoint in the IP header of packets from ECN-capable transports."
+  },
+  "ui_example": "CAKE marks a busy download's packets when they wait longer than its target."
+ },
+ "drop": {
+  "name": "Drop (by the shaper)",
+  "plain": "A packet the shaper discards on purpose so the sender slows down. A few drops under load are healthy.",
+  "mixup": "Not every lost packet is bad: an early drop keeps delay low for everyone.",
+  "example": "About 0.1% drops while delay stays near 5 ms is better than no drops with 400 ms of delay.",
+  "source": {
+   "url": "https://www.bufferbloat.net/projects/bloat/wiki/Introduction/",
+   "quote": "some packet loss is essential."
+  },
+  "id": "drop",
+  "group": "G0"
+ },
+ "bufferbloat": {
+  "id": "bufferbloat",
+  "name": "Bufferbloat",
+  "group": "G6",
+  "note": "",
+  "also": [],
+  "say": "excess buffering at the bottleneck, so a queue of packets builds up and adds delay under load.",
+  "people": "\"lag\", \"ping spikes when someone uploads\", \"slow internet\" (the pipe is fine; the delay is not).",
+  "applies": "at the bottleneck queue, in either direction, on wired or Wi-Fi. A bigger plan does not fix it.",
+  "source_text": "bufferbloat.net (same URL): \"Bufferbloat is the undesirable latency that comes from a router or other network equipment buffering too much data.\" and \"buying fatter pipes doesn’t fix the bufferbloat cascades, and buying larger buffers actually makes them worse!\" RFC 8033: \"Bufferbloat is a phenomenon in which excess buffers in the network cause high latency and latency variation.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc8033.txt"
+  ],
+  "plain": "Delay that builds up when a device on the path holds too many packets in its buffer while the line is busy.",
+  "mixup": "Idle ping can be fine while the delay under load is huge; a faster plan does not fix it.",
+  "source": {
+   "url": "https://www.bufferbloat.net/projects/bloat/wiki/Introduction/",
+   "quote": "Bufferbloat is the undesirable latency that comes from a router or other network equipment buffering too much data."
+  },
+  "ui_example": "Idle 12 ms, during an upload 380 ms."
+ },
+ "delay": {
+  "name": "Delay under load",
+  "plain": "How much longer a reply takes while the line is busy, compared with idle. This is what a shaper reduces.",
+  "mixup": "\"Ping\" is a tool; idle ping says little about delay under load.",
+  "example": "Idle 8 ms, under load 12 ms: 4 ms added delay.",
+  "source": {
+   "url": "https://www.rfc-editor.org/rfc/rfc2679.txt",
+   "quote": "Values of this metric above the minimum provide an indication of the congestion present in the path."
+  },
+  "id": "delay",
+  "group": "G0"
+ },
+ "weight": {
+  "name": "Queue weight",
+  "plain": "A queue's share of its pipe when several queues are busy. Only some schedulers (WF2Q+, QFQ) use it.",
+  "mixup": "FQ-CoDel and CAKE ignore weights; a weight is not a priority.",
+  "example": "Weights 80 and 20 on a WF2Q+ pipe give 80% and 20% when both are busy.",
+  "source": {
+   "url": "https://forum.opnsense.org/index.php?topic=26762.0",
+   "quote": "Apparently with fq_codel that's not possible since it ignores the weights chosen in the queue."
+  },
+  "secondary": true,
+  "id": "weight",
+  "group": "G0"
+ },
+ "direction": {
+  "name": "Download / upload",
+  "plain": "Download is traffic to your devices; upload is traffic from them. On a WAN shaper rule, \"in\" is download and \"out\" is upload.",
+  "mixup": "\"in\" and \"out\" flip between WAN and LAN interfaces, so this page names the direction instead.",
+  "example": "WAN rule direction in → the download pipe.",
+  "source": {
+   "url": "https://docs.netgate.com/pfsense/en/latest/trafficshaper/limiters.html",
+   "quote": "avoid using In and Out since the same limiter, if used on both WAN and LAN, would be used in the In direction on one interface and the Out direction on"
+  },
+  "id": "direction",
+  "group": "G0"
+ },
+ "tick": {
+  "name": "Clock tick (kern.hz)",
+  "plain": "The shaper releases packets on the kernel's timer. kern.hz is how many times per second it fires.",
+  "mixup": "Virtual machines default to 100 Hz, which makes shaping coarse (10 ms steps).",
+  "example": "kern.hz = 1000 gives 1 ms steps.",
+  "source": {
+   "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/README.md",
+   "quote": "If OPNsense runs in a VM, set `kern.hz` to 1000."
+  },
+  "id": "tick",
+  "group": "G0"
+ },
+ "qos": {
+  "id": "qos",
+  "name": "Quality of Service",
+  "group": "G1",
+  "note": "",
+  "also": [],
+  "say": "QoS is the goal, \"different traffic gets different treatment\". It is not one switch or one feature. The tools that reach it are classifying, marking, shaping, policing, scheduling and queue management.",
+  "people": "\"QoS makes my internet faster\"; \"turn QoS on\"; \"QoS = prioritising games\".",
+  "applies": "applies to any hop where traffic competes for a link. It does not add capacity: a link that is full stays full, and QoS only decides who waits and who is dropped.",
+  "example": "a 100 Mbit/s line shared by a video call (2 Mbit/s) and a backup (as much as it can get). Without QoS the call waits behind the backup's queue (hundreds of ms); with QoS the call waits a few ms. Total throughput is unchanged.",
+  "source_text": "RFC 2475 (https://www.rfc-editor.org/rfc/rfc2475.txt): \"This architecture is composed of a number of functional elements implemented in network nodes, including a small set of per-hop forwarding behaviors, packet classification functions, and traffic conditioning functions including metering, marking, shaping, and policing.\" Gap: no standard gives a one-line QoS definition; this entry's one-sentence definition is ours (inference, grade \"Our reasoning\").",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc2475.txt"
+  ],
+  "plain": "QoS is the goal, \"different traffic gets different treatment\". It is not one switch or one feature. The tools that reach it are classifying, marking, shaping, policing, scheduling and queue management."
+ },
+ "traffic-management": {
+  "id": "traffic-management",
+  "name": "Traffic management",
+  "group": "G1",
+  "note": "the umbrella this plugin uses instead of \"QoS\"",
+  "also": [],
+  "say": "everything a node does to the packets it forwards when demand exceeds the link: holding (buffers), choosing the order (scheduler), discarding or marking (AQM, policing), and limiting rate (shaping).",
+  "people": "\"QoS\" for all of it, or \"bandwidth management\", \"traffic control\".",
+  "applies": "the choke point (the bottleneck). Not a property of the whole internet path.",
+  "example": "the plugin's page title is \"Shaper\" and the status says \"Fair sharing: on\", not \"QoS: on\" (see section 24.4).",
+  "source_text": "RFC 7567 (https://www.rfc-editor.org/rfc/rfc7567.txt): \"The use of scheduling mechanisms, such as priority queueing, classful queueing, and fair queueing, is often effective in networks to help a network serve the needs of a range of applications. Network operators can use these methods to manage traffic passing a choke point.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc7567.txt"
+  ],
+  "plain": "everything a node does to the packets it forwards when demand exceeds the link: holding (buffers), choosing the order (scheduler), discarding or marking (AQM, policing), and limiting rate (shaping)."
+ },
+ "policing": {
+  "id": "policing",
+  "name": "Policing",
+  "group": "G2",
+  "note": "",
+  "also": [],
+  "say": "policing discards (or re-marks) packets that exceed a rate; it does not hold them back, so it adds no delay but causes loss.",
+  "people": "\"rate limit\", \"throttle\", \"shaping\" (used for both).",
+  "applies": "typically on ingress at a provider edge. It is not what dummynet pipes with a queue do; those shape.",
+  "example": "a policer set to 50 Mbit/s with a small burst drops the 51st megabit in any second; the sender sees loss and slows down.",
+  "source_text": "RFC 2475: \"Droppers discard some or all of the packets in a traffic stream in order to bring the stream into compliance with a traffic profile. This process is know as \"policing\" the stream. Note that a dropper can be implemented as a special case of a shaper by setting the shaper buffer size to zero (or a few) packets.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc2475.txt"
+  ],
+  "plain": "policing discards (or re-marks) packets that exceed a rate; it does not hold them back, so it adds no delay but causes loss."
+ },
+ "throttle": {
+  "id": "throttle",
+  "name": "Throttle",
+  "group": "G2",
+  "note": "informal word, not a protocol term",
+  "also": [],
+  "say": "\"throttle\" is an everyday word for any rate reduction; the technical word is shaping (delay) or policing (drop). ISP \"throttling\" is a policy (a lower rate for some traffic); shaping is a mechanism.",
+  "people": "\"my ISP is throttling me\"; \"throttle the backup\".",
+  "applies": "use \"limit to X Mbit/s (shaping)\" in the UI. Linux's own man page uses \"throttle\" only for the kernel pausing dequeue.",
+  "source_text": "tc-tbf(8), same URL as above: \"may throttle itself, although packets are available\" (the word describes the qdisc pausing, not a policy).",
+  "urls": [
+   "https://man7.org/linux/man-pages/man8/tc-tbf.8.html"
+  ],
+  "plain": "\"throttle\" is an everyday word for any rate reduction; the technical word is shaping (delay) or policing (drop). ISP \"throttling\" is a policy (a lower rate for some traffic); shaping is a mechanism."
+ },
+ "token-bucket": {
+  "id": "token-bucket",
+  "name": "Token bucket",
+  "group": "G2",
+  "note": "",
+  "also": [],
+  "say": "a meter that holds \"tokens\" which arrive at the set rate up to a bucket size; each packet spends tokens, so short bursts pass and the long-run average is the rate.",
+  "people": "\"bucket\" (for the queue), \"the leaky bucket\", \"burst allowance\".",
+  "applies": "it is a counting rule (a meter), not a place packets wait. The packets wait in a queue; the bucket only decides when they may leave or whether they conform.",
+  "example": "rate 10 Mbit/s, bucket 15 kB: after idle, 15 kB (10 full-size packets) leaves back-to-back at line speed, then 10 Mbit/s.",
+  "source_text": "RFC 2475: \"all packets marked with DS codepoint X should be measured against a token bucket meter with rate r and burst size b. In this example out-of-profile packets are those packets in the traffic stream which arrive when insufficient tokens are available in the bucket.\" RFC 2697 (https://www.rfc-editor.org/rfc/rfc2697.txt) adds colours: \"A packet is marked green if it doesn't exceed the CBS, yellow if it does exceed the CBS, but not the EBS, and red otherwise.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc2697.txt",
+   "https://www.rfc-editor.org/rfc/rfc2475.txt"
+  ],
+  "plain": "a meter that holds \"tokens\" which arrive at the set rate up to a bucket size; each packet spends tokens, so short bursts pass and the long-run average is the rate."
+ },
+ "leaky-bucket": {
+  "id": "leaky-bucket",
+  "name": "Leaky bucket",
+  "group": "G2",
+  "note": "",
+  "also": [],
+  "say": "the mirror image of a token bucket: water (packets) is added and leaks out at the set rate; overflow means non-conforming. As a meter it gives the same verdicts as a token bucket.",
+  "people": "\"leaky bucket\" and \"token bucket\" as two different shapers; or \"bucket\" for the buffer.",
+  "applies": "sources use the name for two things (a meter and a queue), which is why the confusion exists.",
+  "source_text": "https://en.wikipedia.org/wiki/Leaky_bucket: \"The leaky bucket as a meter is exactly equivalent to (a mirror image of) the token bucket algorithm\". Also: \"This has resulted in confusion about what the leaky bucket algorithm is and what its properties are.\"",
+  "source_note": "secondary, Wikipedia; the primary ATM Forum/ITU text was not read",
+  "urls": [
+   "https://en.wikipedia.org/wiki/Leaky_bucket"
+  ],
+  "plain": "the mirror image of a token bucket: water (packets) is added and leaks out at the set rate; overflow means non-conforming. As a meter it gives the same verdicts as a token bucket."
+ },
+ "burst": {
+  "id": "burst",
+  "name": "Burst",
+  "group": "G2",
+  "note": "",
+  "also": [],
+  "say": "a burst is data sent faster than the set rate for a short time, allowed by the bucket size; \"burst size\" is that allowance in bytes.",
+  "people": "\"boost\", \"turbo\", \"burst speed\" (as if extra bandwidth), or \"burst\" for any spike.",
+  "applies": "only matters where a token bucket is in play (ipfw pipe `burst`, tc `burst`, MikroTik `burst-limit`). It is not extra capacity, the long-run average is unchanged.",
+  "example": "ipfw `burst 15000` lets 15 kB bypass the pipe's pacing after idle.",
+  "source_text": "ipfw(8) (https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8&format=html): \"If the data to be sent exceeds the pipe's bandwidth limit (and the pipe was previously idle), up to size bytes of data are allowed to bypass the dummynet scheduler, and will be sent as fast as the physical link allows.\" tc-tbf(8): \"burst: Size of the bucket, in bytes. This is the maximum amount of bytes that tokens can be available for instantaneously.\" RFC 7567: \"queue limits should not reflect the steady-state queues we want to be maintained in the network; instead, they should reflect the size of bursts that a network device needs to absorb.\"",
+  "urls": [
+   "https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8&format=html",
+   "https://www.rfc-editor.org/rfc/rfc7567.txt"
+  ],
+  "plain": "a burst is data sent faster than the set rate for a short time, allowed by the bucket size; \"burst size\" is that allowance in bytes."
+ },
+ "capacity-vs-bandwidth": {
+  "id": "capacity-vs-bandwidth",
+  "name": "Capacity vs bandwidth",
+  "group": "G2",
+  "note": "rate, throughput, bandwidth, capacity, goodput",
+  "also": [],
+  "say": "capacity = the most a link or path can carry (per layer); available capacity = what is unused now; throughput = what actually flows; goodput = the useful application data inside throughput; the \"rate\" in a shaper is a limit we set. \"Bandwidth\" in everyday use means capacity, but in a lab it can also mean Hz of spectrum.",
+  "people": "\"my bandwidth is 500 Mbit/s\", \"bandwidth\" for delay (\"not enough bandwidth, it lags\"), \"speed\".",
+  "applies": "capacity is only meaningful at a stated layer (physical, Ethernet, IP). Bandwidth and latency are separate axes: more of one does not fix the other.",
+  "example": "line sync 1000 Mbit/s (physical) > Ethernet 1000 > IP-layer about 941 Mbit/s > TCP goodput about 940 Mbit/s with 1500-byte frames (header overhead; our figures from the standard 38 B per frame + 40 B TCP/IP header, not measured here).",
+  "source_text": "RFC 5136 (https://www.rfc-editor.org/rfc/rfc5136.txt): \"capacity is only meaningful when defined relative to a given protocol layer in the network. It is meaningless to speak of \"link\" capacity without qualifying exactly what is meant.\" and \"literature often overloads the term \"bandwidth\" to refer to what we have described as capacity in this document.\" Also \"Nominal Physical Link Capacity, NomCap(L), is the theoretical maximum amount of data that the link L can support.\" Goodput appears in the IETF responsiveness draft (https://datatracker.ietf.org/doc/draft-ietf-ippm-responsiveness/): \"should be included with goodput (up and down) and idle latency as critical indicators of network quality.\" Gap: a formal goodput definition was not read; the \"useful application data\" gloss is ours.",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc5136.txt",
+   "https://datatracker.ietf.org/doc/draft-ietf-ippm-responsiveness/"
+  ],
+  "plain": "capacity = the most a link or path can carry (per layer); available capacity = what is unused now; throughput = what actually flows; goodput = the useful application data inside throughput; the \"rate\" in a shaper is a limit we set. \"Bandwidth\" in everyday use means capacity, but in a lab it can also mean Hz of spectrum."
+ },
+ "buffer-vs-queue": {
+  "id": "buffer-vs-queue",
+  "name": "Buffer vs queue",
+  "group": "G3",
+  "note": "",
+  "also": [],
+  "say": "a buffer is the memory that can hold packets; a queue is the ordered line of packets waiting in it. A big buffer allows a long queue.",
+  "people": "\"buffer\" and \"queue\" interchangeably; \"buffering\" for video players (a different, application-level thing).",
+  "applies": "both live inside the forwarding device (router, modem, switch, Wi-Fi driver). The player's \"buffering\" bar is an application buffer, not this.",
+  "example": "a modem with 1 MB of buffer in front of a 20 Mbit/s uplink can hold 400 ms of packets (1,000,000 B x 8 / 20 Mbit/s).",
+  "source_text": "RFC 7567: \"The goal of buffering in the network is to absorb data bursts and to transmit them during the (hopefully) ensuing bursts of silence.\" RFC 8289 (https://www.rfc-editor.org/rfc/rfc8289.txt): \"sojourn time: the amount of time a packet has spent in a particular buffer, i.e., the time a packet departs the buffer minus the time the packet arrived at the buffer.\" RFC 8290 (https://www.rfc-editor.org/rfc/rfc8290.txt): \"Queue: A queue of packets represented internally in FQ-CoDel.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc8289.txt",
+   "https://www.rfc-editor.org/rfc/rfc8290.txt",
+   "https://www.rfc-editor.org/rfc/rfc7567.txt"
+  ],
+  "plain": "a buffer is the memory that can hold packets; a queue is the ordered line of packets waiting in it. A big buffer allows a long queue."
+ },
+ "queue-discipline": {
+  "id": "queue-discipline",
+  "name": "Queue discipline",
+  "group": "G3",
+  "note": "qdisc / scheduler",
+  "also": [],
+  "say": "the rule that decides which waiting packet leaves next (the scheduler) and, in some designs, which to drop (queue management).",
+  "people": "\"the QoS algorithm\", \"the shaper\".",
+  "applies": "at the egress of an interface. A scheduler orders packets; on its own it does not set a rate (that is the shaper).",
+  "source_text": "RFC 8290: \"Scheduler: A mechanism to select which queue a packet is dequeued from.\" tc-tbf(8) separates the jobs: \"TBF is a pure shaper and never schedules traffic.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc8290.txt"
+  ],
+  "plain": "the rule that decides which waiting packet leaves next (the scheduler) and, in some designs, which to drop (queue management)."
+ },
+ "fifo-tail-drop": {
+  "id": "fifo-tail-drop",
+  "name": "FIFO, tail drop",
+  "group": "G3",
+  "note": "",
+  "also": [],
+  "say": "FIFO serves packets in arrival order; tail drop discards the newest arrival when the buffer is full. Together they are the old default: no signal until the queue is full, so the queue stays full.",
+  "people": "\"the router just drops packets when it is busy\".",
+  "applies": "any device with a plain queue (dummynet pipes are FIFO). Not CAKE, FQ-CoDel or PIE, which act before the queue is full.",
+  "example": "256-packet FIFO at 20 Mbit/s: a standing full queue is about 150 ms of delay (256 x 1500 B x 8 / 20 Mbit/s = 154 ms).",
+  "source_text": "RFC 7567: \"This technique is known as \"tail drop\", since the packet that arrived most recently (i.e., the one on the tail of the queue) is dropped when the queue is full.\" and \"The \"tail drop\" discipline allows queues to maintain a full (or, almost full) status for long periods of time\". ipfw(8): \"A pipe emulates a link with given bandwidth and propagation delay, driven by a FIFO scheduler and a single queue\".",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc7567.txt"
+  ],
+  "plain": "FIFO serves packets in arrival order; tail drop discards the newest arrival when the buffer is full. Together they are the old default: no signal until the queue is full, so the queue stays full."
+ },
+ "aqm": {
+  "id": "aqm",
+  "name": "AQM",
+  "group": "G3",
+  "note": "Active Queue Management",
+  "also": [],
+  "say": "dropping or ECN-marking packets before the buffer is full, so senders slow down early and the queue stays short.",
+  "people": "\"smart queue\", \"SQM\" (a Linux/OpenWrt name for the same family), \"anti-lag\".",
+  "applies": "at the bottleneck queue. It does not raise capacity; it keeps delay low at the capacity you have.",
+  "source_text": "RFC 7567: \"The solution to the full-queues problem is for network devices to drop or ECN-mark packets before a queue becomes full, so that hosts can respond to congestion before buffers overflow. We call such a proactive approach AQM.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc7567.txt"
+  ],
+  "plain": "dropping or ECN-marking packets before the buffer is full, so senders slow down early and the queue stays short."
+ },
+ "codel": {
+  "id": "codel",
+  "name": "CoDel, FQ-CoDel, PIE, CAKE",
+  "group": "G3",
+  "note": "the algorithms; say which one",
+  "also": [
+   "fq-codel",
+   "pie",
+   "cake"
+  ],
+  "details": [
+   {
+    "label": "PIE",
+    "text": "AQM that drops randomly on arrival from a controller. \"Congestion detection, however, is based on the queuing latency instead of the queue length (as with RED).\" (RFC 8033, https://www.rfc-editor.org/rfc/rfc8033.txt)"
+   }
+  ],
+  "people": "\"fq_codel\" for any anti-bufferbloat setting; \"CoDel\" for CAKE.",
+  "applies": "FQ-CoDel does not shape by itself in dummynet (the pipe's rate does). PIE and CoDel alone do not give per-device fairness.",
+  "example": "FQ-CoDel default 1024 flow queues and CoDel target 5 ms (ipfw(8): `net.inet.ip.dummynet.fqcodel.target` 5000 microseconds).",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc8033.txt"
+  ],
+  "plain": ""
+ },
+ "priority-strict": {
+  "id": "priority-strict",
+  "name": "Priority (strict)",
+  "group": "G4",
+  "note": "",
+  "also": [],
+  "say": "strict priority always serves the higher class first; lower classes get only what is left and can starve. A priority is a scheduling order, not a speed.",
+  "people": "\"priority for my games\", \"boost my PC\", \"VIP\".",
+  "applies": "only at a congested egress where queues compete; with an empty queue every packet leaves at once and priority does nothing. It does not help on the internet beyond our router.",
+  "example": "MikroTik queue priority 1 versus 8: \"Child queue with higher priority will have chance to reach its max-limit before child with lower priority.\"",
+  "source_text": "MikroTik Queues (https://help.mikrotik.com/docs/spaces/ROS/pages/328088/Queues): \"Child queue with higher priority will have chance to reach its max-limit before child with lower priority. Priority have nothing to do with bursts.\" RFC 8622 (https://www.rfc-editor.org/rfc/rfc8622.txt) for the lowest class: \"when resources become scarce, BE traffic has precedence over LE traffic and may preempt it.\"",
+  "urls": [
+   "https://help.mikrotik.com/docs/spaces/ROS/pages/328088/Queues",
+   "https://www.rfc-editor.org/rfc/rfc8622.txt"
+  ],
+  "plain": "strict priority always serves the higher class first; lower classes get only what is left and can starve. A priority is a scheduling order, not a speed."
+ },
+ "weight-share": {
+  "id": "weight-share",
+  "name": "Weight (share)",
+  "group": "G4",
+  "note": "weighted fair share",
+  "also": [],
+  "say": "each class gets a share of the link in proportion to its weight; nobody is starved, and a class that is idle lends its share.",
+  "people": "\"priority\" (for a weight), \"bandwidth reservation\".",
+  "applies": "where several queues feed one rate. A weight is not a guarantee of a rate and not a cap.",
+  "example": "ipfw queues weights 1..100: with weights 80 and 20 on a 100 Mbit/s pipe and both busy, they get 80 and 20 Mbit/s; if only one is busy it gets 100.",
+  "source_text": "ipfw(8): \"weight: Specifies the weight to be used for flows matching this queue. The weight must be in the range 1..100, and defaults to 1.\" and \"pipes can be used to set hard limits to the bandwidth that a flow can use, whereas queues can be used to determine how different flows share the available bandwidth.\" pfSense limiters (https://docs.netgate.com/pfsense/en/latest/trafficshaper/limiters.html): \"Unlike PRIQ and CBQ priorities, a lowly-weighted queue is not in danger of being starved of bandwidth by the firewall.\"",
+  "urls": [
+   "https://docs.netgate.com/pfsense/en/latest/trafficshaper/limiters.html"
+  ],
+  "plain": "each class gets a share of the link in proportion to its weight; nobody is starved, and a class that is idle lends its share."
+ },
+ "fairness": {
+  "id": "fairness",
+  "name": "Fairness",
+  "group": "G4",
+  "note": "per-flow, per-host",
+  "also": [],
+  "say": "fairness divides the link equally between flows (per-flow) or between devices and then flows (per-host), whatever their demand.",
+  "people": "\"equal speeds\", \"fair usage policy\" (an ISP contract term, not the scheduler).",
+  "applies": "per-host fairness needs to see the real LAN address, so it must run before NAT hides it; a VPN tunnel counts as one host.",
+  "example": "one PC with 20 downloads and one phone with 1 stream: per-flow gives the PC 20/21 of the link, per-host gives each 50 %.",
+  "source_text": "tc-cake(8) (https://man7.org/linux/man-pages/man8/tc-cake.8.html): \"dual-srchost: Flows are defined by the 5-tuple, and fairness is applied first over source addresses, then over individual flows. Good for use on egress traffic from a LAN to the internet, where it'll prevent any one LAN host from monopolising the uplink, regardless of the number of flows they use.\"",
+  "urls": [
+   "https://man7.org/linux/man-pages/man8/tc-cake.8.html"
+  ],
+  "plain": "fairness divides the link equally between flows (per-flow) or between devices and then flows (per-host), whatever their demand."
+ },
+ "flow": {
+  "id": "flow",
+  "name": "Flow",
+  "group": "G4",
+  "note": "5-tuple",
+  "also": [],
+  "say": "one conversation, identified by source and destination address, source and destination port, and protocol.",
+  "people": "\"connection\", \"session\", \"stream\" (often the same, not always: a UDP exchange has no connection).",
+  "source_text": "RFC 8290: \"Flow: A flow is typically identified by a 5-tuple of source IP address, destination IP address, source port number, destination port number, and protocol number.\" RFC 2474 (https://www.rfc-editor.org/rfc/rfc2474.txt): \"Microflow: a single instance of an application-to-application flow of packets which is identified by source address, destination address, protocol id, and source port, destination port (where applicable).\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc2474.txt",
+   "https://www.rfc-editor.org/rfc/rfc8290.txt"
+  ],
+  "plain": "one conversation, identified by source and destination address, source and destination port, and protocol."
+ },
+ "tin-class": {
+  "id": "tin-class",
+  "name": "Tin (class)",
+  "group": "G4",
+  "note": "CAKE tin; Diffserv class",
+  "also": [],
+  "say": "a tin is CAKE's name for a priority tier with its own rate share; a class is the generic word (AF class, CS class). Packets are put in a tin by their DSCP.",
+  "people": "\"queue\" or \"lane\" for a tin; \"priority\" for a class.",
+  "applies": "tins are inside CAKE and exist only on the egress of the shaped link.",
+  "source_text": "RFC 2597 (https://www.rfc-editor.org/rfc/rfc2597.txt): \"Four AF classes are defined, where each AF class is in each DS node allocated a certain amount of forwarding resources (buffer space and bandwidth).\" CAKE's own man page text on tins was not read here (gap).",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc2597.txt"
+  ],
+  "plain": "a tin is CAKE's name for a priority tier with its own rate share; a class is the generic word (AF class, CS class). Packets are put in a tin by their DSCP."
+ },
+ "dscp": {
+  "id": "dscp",
+  "name": "DSCP",
+  "group": "G5",
+  "note": "Diffserv codepoint; PHB",
+  "also": [],
+  "say": "DSCP is a 6-bit label in the IP header that asks the next router to apply a named forwarding behaviour (a PHB) to the packet. It is a request, honoured only where the operator configured it.",
+  "people": "\"DSCP will prioritize me on the internet\"; \"QoS tag\"; \"ToS\".",
+  "applies": "layer 3, per hop, inside a network you control. Many networks re-mark unknown DSCPs to 0 at their edge, so the label rarely survives the open internet. It does not create capacity or reserve a rate.",
+  "example": "DSCP 46 (EF) on a VoIP packet; your router puts it in the Voice tin; your ISP likely rewrites it to 0.",
+  "source_text": "RFC 2474: \"Differentiated Services Field: the IPv4 header TOS octet or the IPv6 Traffic Class octet when interpreted in conformance with the definition given in this document.\" and \"Per-hop Behavior (PHB): a description of the externally observable forwarding treatment applied at a differentiated services-compliant node to a behavior aggregate.\" RFC 8100 (https://www.rfc-editor.org/rfc/rfc8100.txt): \"Many networks do not follow this recommendation and instead re-mark unknown or unexpected DSCPs to zero upon receipt for default (best-effort) forwarding\" and \"re-marking to CS0 is a widely deployed behavior.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc8100.txt",
+   "https://www.rfc-editor.org/rfc/rfc2474.txt"
+  ],
+  "plain": "DSCP is a 6-bit label in the IP header that asks the next router to apply a named forwarding behaviour (a PHB) to the packet. It is a request, honoured only where the operator configured it."
+ },
+ "phbs": {
+  "id": "phbs",
+  "name": "PHBs",
+  "group": "G5",
+  "note": "EF, AF, CS, DF, LE",
+  "also": [],
+  "details": [
+   {
+    "label": "EF (46)",
+    "text": "\"EF is intended to provide a building block for low delay, low jitter and low loss services by ensuring that the EF aggregate is served at a certain configured rate.\" (RFC 3246, https://www.rfc-editor.org/rfc/rfc3246.txt)"
+   },
+   {
+    "label": "AF (AF11..AF43)",
+    "text": "four classes x three drop precedences. \"There are no quantifiable timing requirements (delay or delay variation) associated with the forwarding of AF packets.\" (RFC 2597). So AF is \"assured share\", not \"fast\"."
+   },
+   {
+    "label": "CS (CS0..CS7)",
+    "text": "\"Class Selector Codepoint: any of the eight codepoints in the range ' xxx000'\" (RFC 2474); kept for IP-precedence compatibility."
+   },
+   {
+    "label": "LE (DSCP 1)",
+    "text": "\"when resources become scarce, BE traffic has precedence over LE traffic and may preempt it.\" (RFC 8622)"
+   }
+  ],
+  "people": "\"CS1 for torrents\", \"EF for games\". CS1 was the old low-priority marking; RFC 8622 replaces it with LE: \"The RECOMMENDED DSCP marking is LE (Lower Effort), which replaces the prior recommendation for CS1\".",
+  "applies": "a PHB is a behaviour at one node, not an end-to-end guarantee (\"per-hop\").",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc3246.txt",
+   "https://www.rfc-editor.org/rfc/rfc2597.txt",
+   "https://www.rfc-editor.org/rfc/rfc2474.txt",
+   "https://www.rfc-editor.org/rfc/rfc8622.txt"
+  ],
+  "plain": ""
+ },
+ "ip-precedence-tos": {
+  "id": "ip-precedence-tos",
+  "name": "IP precedence, TOS",
+  "group": "G5",
+  "note": "",
+  "also": [],
+  "say": "the original 1981 meaning of the same byte: 3 bits Precedence plus Delay/Throughput/Reliability flags. DSCP replaced it; CS codepoints keep the Precedence bits compatible.",
+  "people": "\"ToS\" for DSCP; \"ToS 0x10\" (the old low-delay flag).",
+  "source_text": "RFC 791 (https://www.rfc-editor.org/rfc/rfc791.txt): \"Bits 0-2: Precedence. Bit 3: 0 = Normal Delay, 1 = Low Delay.\" and \"Several networks offer service precedence, which somehow treats high precedence traffic as more important than other traffic (generally by accepting only traffic above a certain precedence at time of high load).\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc791.txt"
+  ],
+  "plain": "the original 1981 meaning of the same byte: 3 bits Precedence plus Delay/Throughput/Reliability flags. DSCP replaced it; CS codepoints keep the Precedence bits compatible."
+ },
+ "pcp-8021p": {
+  "id": "pcp-8021p",
+  "name": "PCP (802.1p)",
+  "group": "G5",
+  "note": "layer 2, wired VLAN tag",
+  "also": [],
+  "say": "PCP is a 3-bit priority field (0 to 7) in the 802.1Q VLAN tag of an Ethernet frame. \"802.1p\" is the old task-group name for it.",
+  "people": "\"802.1p priority\", \"VLAN priority\", \"802.1Q QoS\" (802.1Q is the VLAN tag; the priority is one field of it).",
+  "applies": "only inside one layer-2 network (between a switch and its neighbours). It is lost when the frame is routed (a new Ethernet header is built); it is not the IP DSCP and not Wi-Fi.",
+  "example": "PCP 5 (Voice) on a trunk between two switches; the router maps DSCP 46 to PCP 5 on the VLAN uplink.",
+  "source_text": "https://en.wikipedia.org/wiki/IEEE_802.1p: \"a 3-bit field called the Priority Code Point (PCP) within an Ethernet frame header when using VLAN tagged frames as defined by IEEE 802.1Q.\" and \"The way traffic is treated when assigned to any particular class is undefined and left to the implementation.\" RFC 8325 (https://www.rfc-editor.org/rfc/rfc8325.txt): \"no explicit guidance is offered in mapping (6-Bit) Layer 3 DSCP values to (3-Bit) Layer 2 markings (such as IEEE 802.1D, 802.1p or 802.11e), a common practice in the networking industry is to map these by ... the three Most Significant Bits (MSBs) of the DSCP are used as the corresponding L2 markings.\"",
+  "source_note": "secondary: Wikipedia, citing IEEE 802.1Q-2014 Table I-2; the IEEE text is paywalled and was not read",
+  "urls": [
+   "https://en.wikipedia.org/wiki/IEEE_802.1p",
+   "https://www.rfc-editor.org/rfc/rfc8325.txt"
+  ],
+  "plain": "PCP is a 3-bit priority field (0 to 7) in the 802.1Q VLAN tag of an Ethernet frame. \"802.1p\" is the old task-group name for it."
+ },
+ "wmm-80211e": {
+  "id": "wmm-80211e",
+  "name": "WMM (802.11e)",
+  "group": "G5",
+  "note": "Wi-Fi access categories",
+  "also": [],
+  "say": "802.11e defines User Priorities 0 to 7 that map to four Wi-Fi access categories (voice, video, best effort, background); WMM is the Wi-Fi Alliance certification of it. They change who wins the radio channel, not the wired queue.",
+  "people": "\"WMM = gaming mode\", \"802.11e QoS\" for any Wi-Fi tweak.",
+  "applies": "only on the Wi-Fi hop, set by the AP and the client. Our WAN shaper cannot see or fix it.",
+  "source_text": "Wi-Fi Alliance (https://www.wi-fi.org/faq/how-does-wmm-enable-multimedia-applications): \"WMM defines four access categories (voice, video, best effort, and background) that are used to prioritize traffic to provide enhanced multimedia support.\" RFC 8325: \"it is the non-configurable and standard-specified mapping of UP markings to the Access Categories (ACs) from [IEEE.802.11-2016] that generate differentiated treatment over wireless media.\"",
+  "urls": [
+   "https://www.wi-fi.org/faq/how-does-wmm-enable-multimedia-applications",
+   "https://www.rfc-editor.org/rfc/rfc8325.txt"
+  ],
+  "plain": "802.11e defines User Priorities 0 to 7 that map to four Wi-Fi access categories (voice, video, best effort, background); WMM is the Wi-Fi Alliance certification of it. They change who wins the radio channel, not the wired queue."
+ },
+ "latency-delay": {
+  "id": "latency-delay",
+  "name": "Latency, delay",
+  "group": "G6",
+  "note": "one-way delay, RTT",
+  "also": [],
+  "say": "latency/delay is the time a packet takes. One-way delay is source to destination; round-trip time (RTT) is there and back. RTT is what ping reports; it mixes two directions.",
+  "people": "\"my ping is my latency\", \"ping\" for any delay, \"latency\" for bandwidth or for \"lag\".",
+  "applies": "delay has a fixed part (distance, serialisation) and a variable part (queueing). Only the queueing part can be reduced by traffic management.",
+  "example": "idle RTT 12 ms; during an upload 380 ms. The 368 ms difference is queueing delay (bufferbloat), not distance.",
+  "source_text": "RFC 2679 (https://www.rfc-editor.org/rfc/rfc2679.txt): \"The minimum value of this metric provides an indication of the delay due only to propagation and transmission delay.\" and \"Values of this metric above the minimum provide an indication of the congestion present in the path.\" RFC 2681 (https://www.rfc-editor.org/rfc/rfc2681.txt): \"round-trip measurements actually measure the performance of two distinct paths together.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc2679.txt",
+   "https://www.rfc-editor.org/rfc/rfc2681.txt"
+  ],
+  "plain": "latency/delay is the time a packet takes. One-way delay is source to destination; round-trip time (RTT) is there and back. RTT is what ping reports; it mixes two directions."
+ },
+ "ping-vs-icmp": {
+  "id": "ping-vs-icmp",
+  "name": "Ping vs ICMP",
+  "group": "G6",
+  "note": "",
+  "also": [],
+  "say": "ICMP is the protocol (the IP control messages, RFC 792 and RFC 4443 for IPv6); ping is the tool that sends ICMP Echo Request and times the Echo Reply. Ping is one use of ICMP; ICMP also carries errors and path control.",
+  "people": "\"ping\" for latency, for ICMP, for \"game ping\" (which is measured by the game's own protocol), \"block ICMP\" as a security tip.",
+  "applies": "ICMP errors (unreachable, packet too big, IPv6 neighbour and router messages) keep connections working; blocking or throttling all ICMP breaks things (gateways can flap \"offline\" under load). A router may deprioritise Echo, so ping can differ from TCP delay.",
+  "example": "`ping -c 5 1.1.1.1` prints 5 round-trip times; the same host's TCP delay under load can be larger.",
+  "source_text": "RFC 792 (https://www.rfc-editor.org/rfc/rfc792.txt): \"ICMP messages are sent in several situations: for example, when a datagram cannot reach its destination, when the gateway does not have the buffering capacity to forward a datagram, and when the gateway can direct the host to send traffic on a shorter route.\" RFC 4443 (https://www.rfc-editor.org/rfc/rfc4443.txt): \"ICMPv6 is used by IPv6 nodes to report errors encountered in processing packets, and to perform other internet-layer functions, such as diagnostics (ICMPv6 \"ping\").\" ping(8) (https://man7.org/linux/man-pages/man8/ping.8.html): \"ping uses the ICMP protocol's mandatory ECHO_REQUEST datagram to elicit an ICMP ECHO_RESPONSE from a host or gateway.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc792.txt",
+   "https://www.rfc-editor.org/rfc/rfc4443.txt",
+   "https://man7.org/linux/man-pages/man8/ping.8.html"
+  ],
+  "plain": "ICMP is the protocol (the IP control messages, RFC 792 and RFC 4443 for IPv6); ping is the tool that sends ICMP Echo Request and times the Echo Reply. Ping is one use of ICMP; ICMP also carries errors and path control."
+ },
+ "jitter-ipdv": {
+  "id": "jitter-ipdv",
+  "name": "Jitter (IPDV)",
+  "group": "G6",
+  "note": "",
+  "also": [],
+  "say": "delay variation: how much one-way delay changes from packet to packet (IPDV, the difference between two packets' delays) or against a reference such as the minimum (PDV). \"Jitter\" is the everyday word, but sources use it for different calculations.",
+  "people": "\"jitter\" meaning any instability, or \"jitter\" = the ± value in a speed test.",
+  "applies": "matters for real-time media, where it sizes the de-jitter buffer. It is not the same as high latency (a steady 200 ms has zero jitter).",
+  "example": "packets with delays 20, 22, 20, 45 ms: IPDV of consecutive pairs = +2, -2, +25 ms; PDV (minimum 20) = 0, 2, 0, 25 ms.",
+  "source_text": "RFC 3393 (https://www.rfc-editor.org/rfc/rfc3393.txt): \"The ipdv is the difference between the one-way-delay of the selected packets.\" RFC 5481 (https://www.rfc-editor.org/rfc/rfc5481.txt): \"Some refer to this phenomenon as \"jitter\" ... Applications of the term \"jitter\" are much broader than packet transfer performance, with \"unwanted signal variation\" as a general definition.\" RFC 3246 uses a third meaning: \"jitter is defined as the variation between maximum and minimum delay.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc3393.txt",
+   "https://www.rfc-editor.org/rfc/rfc5481.txt",
+   "https://www.rfc-editor.org/rfc/rfc3246.txt"
+  ],
+  "plain": "delay variation: how much one-way delay changes from packet to packet (IPDV, the difference between two packets' delays) or against a reference such as the minimum (PDV). \"Jitter\" is the everyday word, but sources use it for different calculations."
+ },
+ "loss-vs-drop": {
+  "id": "loss-vs-drop",
+  "name": "Loss vs drop",
+  "group": "G6",
+  "note": "",
+  "also": [],
+  "say": "packet loss is any packet that never arrives; an AQM drop is a deliberate, early, small loss that tells the sender to slow down; ECN mark is the same signal without loss. A few deliberate drops are healthy; loss from overflow or radio errors is not.",
+  "people": "\"packet loss\" = \"bad connection\"; \"zero loss\" as a goal.",
+  "applies": "IP does not guarantee delivery, so loss is normal; TCP recovers by resending (which adds delay).",
+  "example": "CAKE at 100 Mbit/s with 5 flows: about 0.1 % AQM drops while delay stays near 5 ms; no drops with a 400 ms queue is worse for the user.",
+  "source_text": "bufferbloat.net (https://www.bufferbloat.net/projects/bloat/wiki/Introduction/): \"Hating packet loss enough to want to stamp it out completely is actually a bad mental habit.\" and \"some packet loss is essential.\" RFC 7567: \"By dropping or ECN-marking packets before buffers overflow, AQM allows network devices to control when and how many packets to drop.\" RFC 792: \"Some datagrams may still be undelivered without any report of their loss.\"",
+  "urls": [
+   "https://www.bufferbloat.net/projects/bloat/wiki/Introduction/",
+   "https://www.rfc-editor.org/rfc/rfc7567.txt",
+   "https://www.rfc-editor.org/rfc/rfc792.txt"
+  ],
+  "plain": "packet loss is any packet that never arrives; an AQM drop is a deliberate, early, small loss that tells the sender to slow down; ECN mark is the same signal without loss. A few deliberate drops are healthy; loss from overflow or radio errors is not."
+ },
+ "lag": {
+  "id": "lag",
+  "name": "Lag",
+  "group": "G6",
+  "note": "informal",
+  "also": [],
+  "say": "the felt symptom; its measurable causes are high delay under load (bufferbloat), delay variation, loss, or a server or CPU problem.",
+  "people": "\"lag\" for all of these.",
+  "source_text": "IETF responsiveness draft (https://datatracker.ietf.org/doc/draft-ietf-ippm-responsiveness/): \"a lack of responsiveness, variously called lag, latency, or bufferbloat, has been recognized as an unfortunate, but common, symptom in today's networks\".",
+  "urls": [
+   "https://datatracker.ietf.org/doc/draft-ietf-ippm-responsiveness/"
+  ],
+  "plain": "the felt symptom; its measurable causes are high delay under load (bufferbloat), delay variation, loss, or a server or CPU problem."
+ },
+ "responsiveness-rpm": {
+  "id": "responsiveness-rpm",
+  "name": "Responsiveness (RPM)",
+  "group": "G6",
+  "note": "",
+  "also": [],
+  "say": "responsiveness is delay measured while the link is busy (working conditions), shown as round-trips per minute (RPM) = 60,000 / RTT in ms; higher is better. It is the same quantity as loaded RTT, in different units.",
+  "people": "\"idle ping 10 ms, so I'm fine\".",
+  "example": "loaded RTT 30 ms = 2,000 RPM; 300 ms = 200 RPM. (The draft is an Internet-Draft, work in progress, not a standard.)",
+  "source_text": "draft-ietf-ippm-responsiveness-09 (same URL): \"The results are presented as \"round-trips per minute\" (RPM), which is calculated by dividing 60 by the round-trip time in seconds (or 60,000 divided by the round-trip time in milliseconds).\" and \"most current “latency” tests report the round-trip time when the network is otherwise idle, which not a good predictor of how a network will behave when it is actively being used for normal data transfer.\"",
+  "urls": [
+   "https://datatracker.ietf.org/doc/draft-ietf-ippm-responsiveness/"
+  ],
+  "plain": "responsiveness is delay measured while the link is busy (working conditions), shown as round-trips per minute (RPM) = 60,000 / RTT in ms; higher is better. It is the same quantity as loaded RTT, in different units."
+ },
+ "ingress-egress": {
+  "id": "ingress-egress",
+  "name": "Ingress, egress",
+  "group": "G7",
+  "note": "and upload / download",
+  "also": [],
+  "say": "ingress is traffic arriving at an interface; egress is traffic leaving it. The same flow is egress on one interface and ingress on the next. A home shaper can only delay what it sends (egress), so \"download shaping\" is done on the LAN-side egress or by ingress mode. The plugin's words are \"download to your devices\" and \"upload from your devices\".",
+  "people": "\"in/out\", \"shape the WAN in\", \"inbound\" (from whose view?).",
+  "applies": "directions flip between WAN and LAN interfaces. Direction names must never be \"in\" and \"out\" alone.",
+  "source_text": "pfSense limiters (https://docs.netgate.com/pfsense/en/latest/trafficshaper/limiters.html): \"avoid using In and Out since the same limiter, if used on both WAN and LAN, would be used in the In direction on one interface and the Out direction on another. The best practice is to use Down or Download and Up or Upload.\" RFC 2474: \"the ingress/egress nodes are the downstream/upstream nodes of a boundary link in a given traffic direction.\"",
+  "urls": [
+   "https://docs.netgate.com/pfsense/en/latest/trafficshaper/limiters.html",
+   "https://www.rfc-editor.org/rfc/rfc2474.txt"
+  ],
+  "plain": "ingress is traffic arriving at an interface; egress is traffic leaving it. The same flow is egress on one interface and ingress on the next. A home shaper can only delay what it sends (egress), so \"download shaping\" is done on the LAN-side egress or by ingress mode. The plugin's words are \"download to your devices\" and \"upload from your devices\"."
+ },
+ "bottleneck": {
+  "id": "bottleneck",
+  "name": "Bottleneck",
+  "group": "G7",
+  "note": "",
+  "also": [],
+  "say": "the slowest (or most loaded) link on the path; the only place a queue forms, so the only place shaping helps.",
+  "people": "\"my router is the bottleneck\" (often it is the ISP link, or Wi-Fi).",
+  "source_text": "RFC 8289: \"bottleneck bandwidth: the limiting bandwidth along a network path.\" RFC 5136: \"the link with the smallest capacity is commonly referred to as the \"narrow link\" of a path ... the link with the smallest available capacity is often referred to as the \"tight link\".\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc8289.txt",
+   "https://www.rfc-editor.org/rfc/rfc5136.txt"
+  ],
+  "plain": "the slowest (or most loaded) link on the path; the only place a queue forms, so the only place shaping helps."
+ },
+ "line-vs-sync-rate": {
+  "id": "line-vs-sync-rate",
+  "name": "Line rate vs sync rate",
+  "group": "G7",
+  "note": "",
+  "also": [],
+  "say": "line (or link) rate is the speed of a physical link (1 Gbit/s Ethernet); sync rate is what a DSL/cable modem negotiated with the line; the contract rate is the sales figure; the shaper rate is what we set under the real IP-layer capacity.",
+  "people": "\"my speed\" for any of them.",
+  "source_text": "RFC 5136 (above), \"Nominal Physical Link Capacity\" is the physical figure that \"provides an upper bound\" on the IP-layer ones. Gap: no primary source read for \"sync rate\"; the definition is ours (inference).",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc5136.txt"
+  ],
+  "plain": "line (or link) rate is the speed of a physical link (1 Gbit/s Ethernet); sync rate is what a DSL/cable modem negotiated with the line; the contract rate is the sales figure; the shaper rate is what we set under the real IP-layer capacity."
+ },
+ "overhead-mpu-framing": {
+  "id": "overhead-mpu-framing",
+  "name": "Overhead, MPU, framing",
+  "group": "G7",
+  "note": "PPPoE, VLAN, DOCSIS, ATM, PTM",
+  "also": [],
+  "say": "every packet costs its size plus the framing bytes the link adds; overhead tells the shaper the true on-wire size, and MPU is the minimum size charged per packet.",
+  "people": "\"overhead\" as a vague tweak; \"PPPoE\" for the whole line type.",
+  "applies": "only matters at the shaped link; wrong values waste rate or leave a leak.",
+  "example": "tc-cake `pppoe-ptm` = overhead 30 + PTM 64/65; `docsis` = overhead 18 mpu 64; `ethernet` = overhead 38 mpu 84; each VLAN tag adds 4.",
+  "source_text": "tc-cake(8): \"mpu BYTES: Rounds each packet (including overhead) up to a minimum length BYTES.\" \"atm: Compensates for ATM cell framing, which is normally found on ADSL links. ... ATM uses fixed 53-byte cells, each of which can carry 48 bytes payload.\" \"ptm: ... VDSL2 links and uses a 64b/65b encoding scheme.\" \"docsis: Equivalent to overhead 18 mpu 64 noatm\" and \"ether-vlan: Adds 4 bytes to the overhead compensation, accounting for an IEEE 802.1Q VLAN header\".",
+  "urls": [
+   "https://man7.org/linux/man-pages/man8/tc-cake.8.html"
+  ],
+  "plain": "every packet costs its size plus the framing bytes the link adds; overhead tells the shaper the true on-wire size, and MPU is the minimum size charged per packet."
+ },
+ "nat": {
+  "id": "nat",
+  "name": "NAT",
+  "group": "G8",
+  "note": "not a QoS tool",
+  "also": [],
+  "say": "NAT rewrites addresses (and ports); it hides LAN hosts behind one public address. It does not shape, it affects shaping only by hiding who is who.",
+  "people": "\"NAT is my firewall\"; \"NAT slows my game\".",
+  "applies": "fairness per device must see addresses before NAT rewrites them.",
+  "source_text": "RFC 2663 (https://www.rfc-editor.org/rfc/rfc2663.txt): \"Network Address Translation is a method by which IP addresses are mapped from one realm to another, in an attempt to provide transparent routing to hosts.\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc2663.txt"
+  ],
+  "plain": "NAT rewrites addresses (and ports); it hides LAN hosts behind one public address. It does not shape, it affects shaping only by hiding who is who."
+ },
+ "states": {
+  "id": "states",
+  "name": "States",
+  "group": "G8",
+  "note": "connection tracking",
+  "also": [],
+  "say": "a state is the firewall's memory of an allowed connection, so later packets skip the rule search. States are not queues or buckets.",
+  "people": "\"states\" as \"sessions\" or \"limits\".",
+  "source_text": "pf.conf(5) (https://man.openbsd.org/pf.conf): \"By default pf(4) filters packets statefully: the first time a packet matches a pass rule, a state entry is created. ... If it does, the packet is passed without evaluation of any rules.\"",
+  "urls": [
+   "https://man.openbsd.org/pf.conf"
+  ],
+  "plain": "a state is the firewall's memory of an allowed connection, so later packets skip the rule search. States are not queues or buckets."
+ },
+ "dummynet-pipe-queue-rule": {
+  "id": "dummynet-pipe-queue-rule",
+  "name": "Dummynet pipe, queue, rule",
+  "group": "G8",
+  "note": "ipfw / dnctl, as used by OPNsense",
+  "also": [],
+  "say": "a rule sends packets to a pipe (a link with a rate, FIFO by default) or to a queue (a weighted share of a pipe); a scheduler attached to the pipe (fq_codel, CAKE) orders packets inside it. Three different objects.",
+  "people": "\"queue\" for a pipe; \"rule\" for a shaper.",
+  "source_text": "ipfw(8): \"A pipe emulates a link with given bandwidth and propagation delay, driven by a FIFO scheduler and a single queue\" and \"A queue is an abstraction used to implement packet scheduling using one of several packet scheduling algorithms.\"",
+  "urls": [
+   "https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8&format=html"
+  ],
+  "plain": "a rule sends packets to a pipe (a link with a rate, FIFO by default) or to a queue (a weighted share of a pipe); a scheduler attached to the pipe (fq_codel, CAKE) orders packets inside it. Three different objects."
+ },
+ "limiter-pfsense": {
+  "id": "limiter-pfsense",
+  "name": "Limiter (pfSense)",
+  "group": "G8",
+  "note": "",
+  "also": [],
+  "say": "pfSense's name for a dummynet pipe (limiter) and its child queue; it limits, and optionally per-IP via a mask.",
+  "people": "\"limiter\" as the shaper for fairness; \"limiter = priority\".",
+  "source_text": "pfSense limiters (same URL): \"Root-level limiters (\"pipes\") may have bandwidth limits and delays, while child limiters (\"queues\"), may have priorities (\"weights\").\" and \"Limiter pipes do not have a concept of borrowing bandwidth from other pipes. A limit is always a hard upper limit.\"",
+  "urls": [
+   "https://docs.netgate.com/pfsense/en/latest/trafficshaper/limiters.html"
+  ],
+  "plain": "pfSense's name for a dummynet pipe (limiter) and its child queue; it limits, and optionally per-IP via a mask."
+ },
+ "queue-tree-mikrotik": {
+  "id": "queue-tree-mikrotik",
+  "name": "Queue tree (MikroTik)",
+  "group": "G8",
+  "note": "",
+  "also": [],
+  "say": "RouterOS's hierarchical queue (HTB, a token-bucket hierarchy): one-directional, needs packet marks from mangle; \"simple queue\" is the easy per-target form. RouterOS \"queue\" means a rate limiter with a CIR (`limit-at`) and MIR (`max-limit`), not just a waiting line.",
+  "people": "\"queue tree\" for any MikroTik QoS.",
+  "source_text": "MikroTik Queues (same URL): \"Queue implementation in MikroTik RouterOS is based on Hierarchical Token Bucket (HTB).\" and \"The queue tree creates only a one-directional queue in one of the HTBs.\" and \"CIR ... (limit-at in RouterOS) ... MIR ... (max-limit in RouterOS)\".",
+  "urls": [
+   "https://help.mikrotik.com/docs/spaces/ROS/pages/328088/Queues"
+  ],
+  "plain": "RouterOS's hierarchical queue (HTB, a token-bucket hierarchy): one-directional, needs packet marks from mangle; \"simple queue\" is the easy per-target form. RouterOS \"queue\" means a rate limiter with a CIR (`limit-at`) and MIR (`max-limit`), not just a waiting line."
+ },
+ "wf2q": {
+  "id": "wf2q",
+  "name": "WF2Q+",
+  "group": "G3",
+  "note": "WF2Q+",
+  "also": [],
+  "say": "Worked-out weighted fair queueing: the scheduler serves the queues attached to a pipe in turn, each in proportion to its weight. It is dummynet's default (OPNsense shows it as \"Weighted Fair Queueing\", the empty choice). It shares between queues, not between flows or hosts.",
+  "people": "\"the default\", \"weighted queueing\", \"fair queueing\" (but it is not per flow unless each flow has its own queue).",
+  "applies": "a pipe with several queues (weights 70/30 split the rate 70/30 when both are busy). With one queue, or rules that point at the pipe itself, it has nothing to share: packets leave in arrival order, like FIFO. Fine for a small lane (an ICMPv6 control pipe) where flow fairness would add nothing; FQ-CoDel or CAKE are what keep a busy internet pipe's delay low.",
+  "example": "the 10 Mbit/s ICMPv6 control lanes run WF2Q+ with one queue: neighbour discovery and router adverts leave in order, never waiting behind downloads in the big pipe.",
+  "source_text": "ipfw(8) (https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8): \"wf2q+ implements the WF2Q+ algorithm, which is a Weighted Fair Queueing algorithm which permits flows to share bandwidth according to their weights. Note that weights are not priorities; even a flow with a minuscule weight will never starve. WF2Q+ has O(log N) per-packet processing cost, where N is the number of flows, and is the default algorithm used by previous versions dummynet's queues.\"",
+  "urls": [
+   "https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8"
+  ],
+  "plain": "Worked-out weighted fair queueing: the scheduler serves the queues attached to a pipe in turn, each in proportion to its weight. It is dummynet's default (OPNsense shows it as \"Weighted Fair Queueing\", the empty choice). It shares between queues, not between flows or hosts."
+ },
+ "qfq": {
+  "id": "qfq",
+  "name": "QFQ",
+  "group": "G3",
+  "note": "QFQ",
+  "also": [],
+  "say": "Quick Fair Queueing: the same sharing by weight as WF2Q+, computed faster (constant time per packet). For a home line the two behave the same.",
+  "people": "\"QFQ\" without knowing it is WF2Q+ in a faster form.",
+  "applies": "pipes with many weighted queues. Not per flow, no queue management (no CoDel), so it does not stop bufferbloat on its own.",
+  "example": "a pipe with 20 queues of different weights: QFQ shares like WF2Q+ with less CPU per packet.",
+  "source_text": "ipfw(8): \"qfq implements the QFQ algorithm, which is a very fast variant of WF2Q+, with similar service guarantees and O(1) processing costs (roughly, 200-250ns per packet).\"",
+  "urls": [
+   "https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8&format=html"
+  ],
+  "plain": "Quick Fair Queueing: the same sharing by weight as WF2Q+, computed faster (constant time per packet). For a home line the two behave the same."
+ },
+ "drr": {
+  "id": "drr",
+  "name": "Deficit Round Robin (DRR)",
+  "group": "G3",
+  "note": "Deficit Round Robin",
+  "also": [],
+  "say": "the queues take turns, each sending up to its share (its weight) per round; a queue that could not use its turn carries the rest over. Cheap, but looser timing than WF2Q+.",
+  "people": "\"round robin\", \"rr\".",
+  "applies": "sharing between queues by weight. FQ-CoDel uses a modified DRR inside, between its own per-flow sub-queues; plain DRR has no AQM.",
+  "example": "two queues with weights 1 and 3 on a busy pipe get about 25 % and 75 %.",
+  "source_text": "ipfw(8): \"rr implements the Deficit Round Robin algorithm, which has O(1) processing costs (roughly, 100-150ns per packet) and permits bandwidth allocation according to weights, but with poor service guarantees.\"",
+  "urls": [
+   "https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8&format=html"
+  ],
+  "plain": "the queues take turns, each sending up to its share (its weight) per round; a queue that could not use its turn carries the rest over. Cheap, but looser timing than WF2Q+."
+ },
+ "fq-pie": {
+  "id": "fq-pie",
+  "name": "FQ-PIE",
+  "group": "G3",
+  "note": "FQ-PIE",
+  "also": [],
+  "say": "like FQ-CoDel (one sub-queue per flow, served in turn), but each sub-queue is kept short by PIE instead of CoDel: PIE drops at random on arrival, more often the longer packets have been waiting.",
+  "people": "\"PIE\", \"fq_pie\".",
+  "applies": "dummynet pipes, as an alternative to FQ-CoDel. Like FQ-CoDel it is per flow, not per host (CAKE is per host).",
+  "example": "a pipe set to FlowQueue-PIE: a download and a call each get their own sub-queue; the download's sub-queue is held near the PIE target.",
+  "source_text": "ipfw(8): \"fq_pie implements the FQ-PIE (FlowQueue-PIE) scheduler/AQM algorithm, which similar to fq_codel but uses per sub-queue PIE AQM instance to control the queue delay.\" RFC 8033 (https://www.rfc-editor.org/rfc/rfc8033.txt): \"Congestion detection, however, is based on the queuing latency instead of the queue length (as with RED).\"",
+  "urls": [
+   "https://www.rfc-editor.org/rfc/rfc8033.txt"
+  ],
+  "plain": "like FQ-CoDel (one sub-queue per flow, served in turn), but each sub-queue is kept short by PIE instead of CoDel: PIE drops at random on arrival, more often the longer packets have been waiting."
+ },
+ "_groups": [
+  {
+   "id": "G0",
+   "title": "On this firewall: the shaper objects and CAKE words this plugin uses"
+  },
+  {
+   "id": "G1",
+   "title": "The big umbrella: QoS versus traffic management"
+  },
+  {
+   "id": "G2",
+   "title": "Controlling rate: shaping, policing, buckets, burst, rate words"
+  },
+  {
+   "id": "G3",
+   "title": "Holding packets: buffer, queue, scheduler, AQM, FIFO, tail drop, CoDel family"
+  },
+  {
+   "id": "G4",
+   "title": "Deciding who goes next: priority, weight, fairness, flow, tin"
+  },
+  {
+   "id": "G5",
+   "title": "Marking traffic: DSCP, precedence, 802.1p, WMM, ECN, L4S"
+  },
+  {
+   "id": "G6",
+   "title": "What users feel: latency, RTT, ping, ICMP, jitter, loss, bufferbloat, lag, responsiveness"
+  },
+  {
+   "id": "G7",
+   "title": "Where shaping happens: direction, bottleneck, line rate, overhead"
+  },
+  {
+   "id": "G8",
+   "title": "Firewall vocabulary that gets mixed in"
+  }
+ ],
+ "_mixups": [
+  {
+   "n": 1,
+   "people": "\"QoS makes my internet faster\"",
+   "say": "QoS decides who waits; the link is no bigger. What improves is delay under load, not speed",
+   "terms": [
+    "qos"
+   ]
+  },
+  {
+   "n": 2,
+   "people": "\"Shaping\" and \"policing\" are the same",
+   "say": "Shaping delays (buffer), policing drops; shaping needs a queue",
+   "terms": [
+    "shaping",
+    "policing"
+   ]
+  },
+  {
+   "n": 3,
+   "people": "\"Throttling\"",
+   "say": "\"Limit to X Mbit/s\" (shaping); throttling is a policy word",
+   "terms": [
+    "throttle"
+   ]
+  },
+  {
+   "n": 4,
+   "people": "\"Bandwidth\" for delay",
+   "say": "Bandwidth/capacity = how much per second; latency = how long. More bandwidth does not cure lag",
+   "terms": [
+    "capacity-vs-bandwidth"
+   ]
+  },
+  {
+   "n": 5,
+   "people": "\"Ping is my latency\"",
+   "say": "Ping is a tool that reports round-trip time of ICMP echo; latency under load is what you feel",
+   "terms": [
+    "ping-vs-icmp",
+    "latency-delay"
+   ]
+  },
+  {
+   "n": 6,
+   "people": "\"Ping\" and \"ICMP\" mean the same",
+   "say": "ICMP is the protocol; ping is one program using one of its messages",
+   "terms": [
+    "ping-vs-icmp"
+   ]
+  },
+  {
+   "n": 7,
+   "people": "\"Priority for my games\"",
+   "say": "A priority is an order at a full queue, not a speed; weights share, strict priority can starve",
+   "terms": [
+    "priority-strict",
+    "weight-share"
+   ]
+  },
+  {
+   "n": 8,
+   "people": "\"DSCP will prioritize me on the internet\"",
+   "say": "DSCP is a request honoured only where configured; many networks re-mark it to 0",
+   "terms": [
+    "dscp"
+   ]
+  },
+  {
+   "n": 9,
+   "people": "\"802.1p, 802.11e, DSCP are all QoS tags\"",
+   "say": "Three layers: 802.1p/PCP (wired VLAN tag), 802.11e/WMM (Wi-Fi), DSCP (IP); each is lost at the next layer boundary",
+   "terms": [
+    "pcp-8021p",
+    "wmm-80211e"
+   ]
+  },
+  {
+   "n": 10,
+   "people": "\"Buffer\" and \"queue\"",
+   "say": "Buffer = memory; queue = the waiting line in it. Big buffer allows long queue",
+   "terms": [
+    "buffer-vs-queue"
+   ]
+  },
+  {
+   "n": 11,
+   "people": "\"Packet loss is always bad\"",
+   "say": "Early AQM drops (or ECN marks) are the control signal; overflow loss is the problem",
+   "terms": [
+    "loss-vs-drop"
+   ]
+  },
+  {
+   "n": 12,
+   "people": "\"Jitter\" = any instability",
+   "say": "Delay variation, with a stated definition (IPDV or PDV); a steady 200 ms has zero jitter",
+   "terms": [
+    "jitter-ipdv"
+   ]
+  },
+  {
+   "n": 13,
+   "people": "\"Leaky bucket\" vs \"token bucket\" are two shapers; \"bucket\" = the buffer",
+   "say": "Both are counting rules (meters); packets wait in a queue, not in the bucket",
+   "terms": [
+    "token-bucket",
+    "leaky-bucket"
+   ]
+  },
+  {
+   "n": 14,
+   "people": "\"In\" and \"out\" / \"inbound\"",
+   "say": "Ingress or egress of which interface? Use \"download to your devices\" / \"upload from your devices\"",
+   "terms": [
+    "ingress-egress"
+   ]
+  },
+  {
+   "n": 15,
+   "people": "\"Idle ping 10 ms, so no bufferbloat\"",
+   "say": "Bufferbloat shows only under load; use responsiveness (loaded RTT, RPM)",
+   "terms": [
+    "responsiveness-rpm",
+    "bufferbloat"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,77 @@
+
+# Copyright (C) 2026 os-shaper-insight contributors
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice,
+#    this list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+# INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+# AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+# OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# os-shaper-insight: after an install or reinstall (also "make upgrade", which is pkg delete +
+# pkg add) the setup in config.xml is still there. Only when a priority is enabled: load its
+# marks again (rc.conf.d/ipfw is back, an ipfw reload runs core's rules and then ours) and build
+# cron now, not at the next reboot. Without one, install changes nothing in the kernel: no
+# reload (it would zero every rule counter), no ipfw tables, no ipfw set touched (review N5).
+# one-time move from the plugin's earlier name (os-shaper-assistant): its state, restore points
+# and ledger in /conf and the bufferbloat results, only where the new name has nothing yet; then
+# its settings section (migrate.php, which also does nothing once the old section is gone)
+for f in apply sections ledger applied; do
+	if [ -f "/conf/shaperassistant-${f}.json" ] && [ ! -e "/conf/shaperinsight-${f}.json" ]; then
+		mv "/conf/shaperassistant-${f}.json" "/conf/shaperinsight-${f}.json" &&
+		    logger -t shaperinsight "migration: /conf/shaperassistant-${f}.json -> /conf/shaperinsight-${f}.json" &&
+		    echo "Shaper Insight migration: /conf/shaperassistant-${f}.json moved to /conf/shaperinsight-${f}.json"
+	fi
+done
+# the state names its restore point by path: point it at the moved file
+if [ -f /conf/shaperinsight-apply.json ] && grep -q '/conf/shaperassistant-' /conf/shaperinsight-apply.json; then
+	sed -i '' 's#/conf/shaperassistant-#/conf/shaperinsight-#g' /conf/shaperinsight-apply.json
+fi
+if [ -d /var/db/shaperassistant ] && [ ! -e /var/db/shaperinsight ]; then
+	mv /var/db/shaperassistant /var/db/shaperinsight &&
+	    logger -t shaperinsight "migration: /var/db/shaperassistant -> /var/db/shaperinsight"
+fi
+/usr/local/opnsense/scripts/shaperinsight/migrate.php
+# root sources rc.conf.d/ipfw at every ipfw start: never group-writable, whatever the umask of
+# the build that packed it (verification 3, N8)
+chmod 0644 /usr/local/etc/rc.conf.d/ipfw
+# the "removing" flag of the uninstall half of a "make upgrade" (review S4) goes first
+rm -f /var/run/shaperinsight-prio.removing
+if /usr/local/opnsense/scripts/shaperinsight/prio.py enabled >/dev/null 2>&1; then
+	/usr/local/sbin/configctl ipfw reload >/dev/null 2>&1
+	/usr/local/sbin/configctl cron restart >/dev/null 2>&1
+fi
+# the history sampler: reads counters every 10 s (no writes to the shaper); off in the settings
+/usr/local/opnsense/scripts/shaperinsight/sampler.py restart >/dev/null 2>&1 || true
+cat <<'MSG'
+Shaper Insight installed: Firewall: Shaper: Shaper Insight: status (and setup, priorities,
+  bufferbloat test, glossary). Not related to Reporting: Insight (NetFlow).
+- Previewing a plan changes nothing. Apply writes shaper pipes, queues and rules (and os-cake
+  entries), with a 60 s confirm timer; "Disable mine" switches off your own conflicting rules.
+- Installing changes nothing in your shaper or the running firewall rules. OPNsense saves two
+  configuration revisions: the plugin's settings section and its entry in the plugin list.
+- Priorities load ipfw rules (set 7) that mark traffic for CAKE; only then are rules and
+  ipfw tables added, and never in a set another package uses.
+- A history sampler reads the shaper and pf counters every 10 s (measured: 150 ms of CPU
+  per sample with 6000 connection states, 1.5 % of one core) into RRD files in /var/db/rrd; Firewall: Shaper: Shaper Insight: sharing
+  shows them, and the sharing page switches it off.
+- The bufferbloat test downloads and uploads to third-party servers you can change.
+- To take Shaper Insight's shaping away, press Remove (setup page, "Undo") before
+  uninstalling. Uninstalling alone leaves your shaper as it is (priorities turn off); a
+  reinstall picks it up again.
+MSG

@@ -1,0 +1,13 @@
+<menu>
+    <Firewall>
+        <Shaper>
+            <InsightStatus VisibleName="Shaper Insight: status" order="45" url="/ui/shaperinsight/"/>
+            <InsightSharing VisibleName="Shaper Insight: sharing" order="46" url="/ui/shaperinsight/sharing"/>
+            <InsightCompiled VisibleName="Shaper Insight: compiled config" order="47" url="/ui/shaperinsight/compiled"/>
+            <InsightWizard VisibleName="Shaper Insight: setup" order="48" url="/ui/shaperinsight/wizard"/>
+            <InsightPriorities VisibleName="Shaper Insight: priorities" order="49" url="/ui/shaperinsight/priorities"/>
+            <InsightBufferbloat VisibleName="Shaper Insight: bufferbloat test" order="50" url="/ui/shaperinsight/bufferbloat"/>
+            <InsightGlossary VisibleName="Shaper Insight: glossary" order="51" url="/ui/shaperinsight/glossary"/>
+        </Shaper>
+    </Firewall>
+</menu>

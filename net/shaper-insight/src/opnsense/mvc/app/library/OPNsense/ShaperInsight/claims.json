@@ -1,0 +1,537 @@
+{
+ "apply-no-flush": {
+  "text": "Apply does not remove objects that were deleted or disabled",
+  "grade": "cited",
+  "mechanism": "The core shaper template writes every pipe and queue, and rc.d/dnctl only adds or changes the objects in the file; it never flushes. A deleted queue stays in the kernel until the shaper is flushed.",
+  "sources": [
+   {
+    "url": "https://github.com/opnsense/core/blob/878f219d71b49a0d7b7df58cea9ba30af5960854/src/opnsense/service/templates/OPNsense/Shaper/dnctl.conf",
+    "locator": "lines 1-49",
+    "quote": "pipe {{ pipe.number }} config bw {{ pipe.bandwidth }}{{ pipe.bandwidthMetric }}/s"
+   },
+   {
+    "url": "https://github.com/opnsense/src/blob/stable/26.7/libexec/rc/rc.d/dnctl",
+    "locator": "dnctl_start",
+    "quote": "$dnctl_program \"$dnctl_rules\""
+   }
+  ],
+  "verify": "Delete a queue, Apply, then look at the Kernel objects panel on the compiled-config page."
+ },
+ "queue-not-pipe": {
+  "text": "Rules must point at a queue for CAKE to see the traffic",
+  "grade": "cited",
+  "mechanism": "A rule aimed at a pipe sends packets through the pipe's internal FIFO, so the rate is limited but the CAKE scheduler is bypassed.",
+  "sources": [
+   {
+    "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/README.md",
+    "locator": "Set up the shaper, step 1",
+    "quote": "Rules that target a pipe itself go through its internal FIFO: the pipe still limits the rate, but CAKE never sees the traffic."
+   }
+  ],
+  "verify": "This page's pipe table counts rules via queue and direct rules."
+ },
+ "cake-active": {
+  "text": "\"type CAKE\" in the kernel proves CAKE runs on the pipe",
+  "grade": "measured-here",
+  "mechanism": "dnctl sched show reports the scheduler each pipe really runs. The configuration still says FQ-CoDel, because os-cake swaps the scheduler when it loads the rules.",
+  "sources": [
+   {
+    "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/plugin/net/cake/src/opnsense/scripts/cake/dnctl.py",
+    "locator": "cake_rule()",
+    "quote": "CoDel / PIE AQM keywords don't apply to CAKE, their target, interval and FQ-CoDel quantum, limit and flows parameters do"
+   }
+  ],
+  "verify": "Read live from dnctl on every refresh."
+ },
+ "module-match": {
+  "text": "After some OPNsense updates CAKE pauses and the pipe's own scheduler takes over",
+  "grade": "cited",
+  "mechanism": "cake-kmod is checked against the exact dummynet.ko it was built for. When the kernel's file differs, os-cake loads the rules unchanged.",
+  "sources": [
+   {
+    "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/README.md",
+    "locator": "Install",
+    "quote": "loads the module: the pipes keep running with their own scheduler (FQ-CoDel"
+   }
+  ],
+  "verify": "os-cake's status line, shown under Module."
+ },
+ "fq-fallback": {
+  "text": "Without CAKE, FQ-CoDel still keeps delay low",
+  "grade": "cited",
+  "mechanism": "Flow queuing plus CoDel on each flow queue keeps standing queues short, at the pipe's rate.",
+  "sources": [
+   {
+    "url": "https://docs.opnsense.org/manual/how-tos/shaper_bufferbloat.html",
+    "locator": "how-to",
+    "quote": "Set initially to 85% of ISP advertised BW, tune later"
+   }
+  ],
+  "verify": "A bufferbloat test with the shaper on and off."
+ },
+ "template-codel-fq": {
+  "text": "\"Enable CoDel\" does nothing on an FQ-CoDel pipe",
+  "grade": "cited",
+  "mechanism": "The template writes the codel keyword only when the scheduler is not FQ-CoDel, which already contains CoDel.",
+  "sources": [
+   {
+    "url": "https://github.com/opnsense/core/blob/878f219d71b49a0d7b7df58cea9ba30af5960854/src/opnsense/service/templates/OPNsense/Shaper/dnctl.conf",
+    "locator": "pipe loop",
+    "quote": "if pipe.codel_enable|default('0') == '1' and pipe.scheduler != 'fq_codel' %} codel {% endif %}"
+   }
+  ],
+  "verify": "Compare the setting with the generated dnctl input panel."
+ },
+ "template-pie": {
+  "text": "\"Enable PIE\" is skipped when CoDel or FQ-CoDel is chosen",
+  "grade": "cited",
+  "mechanism": "The template uses an elif: PIE is written only when neither CoDel nor FQ-CoDel applies.",
+  "sources": [
+   {
+    "url": "https://github.com/opnsense/core/blob/878f219d71b49a0d7b7df58cea9ba30af5960854/src/opnsense/service/templates/OPNsense/Shaper/dnctl.conf",
+    "locator": "pipe loop",
+    "quote": "elif pipe.pie_enable|default('0') == '1' and pipe.scheduler != 'fq_pie' %} pie {% endif %}"
+   }
+  ],
+  "verify": "Compare with the generated dnctl input panel."
+ },
+ "template-fq-params": {
+  "text": "FQ-CoDel quantum, limit and flows only apply to FQ-CoDel pipes",
+  "grade": "cited",
+  "mechanism": "The template writes them inside the \"scheduler == fq_codel\" branch only.",
+  "sources": [
+   {
+    "url": "https://github.com/opnsense/core/blob/878f219d71b49a0d7b7df58cea9ba30af5960854/src/opnsense/service/templates/OPNsense/Shaper/dnctl.conf",
+    "locator": "pipe loop",
+    "quote": "if pipe.scheduler == 'fq_codel' %}"
+   }
+  ],
+  "verify": "Compare with the generated dnctl input panel."
+ },
+ "mask-none": {
+  "text": "A pipe with a mask does not use CAKE",
+  "grade": "cited",
+  "mechanism": "A mask makes one scheduler instance per host; os-cake skips such pipes.",
+  "sources": [
+   {
+    "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/plugin/net/cake/src/opnsense/scripts/cake/lib/__init__.py",
+    "locator": "cake_pipes()",
+    "quote": "CAKE is not used on it: remove the mask, CAKE isolates hosts by itself"
+   }
+  ],
+  "verify": "os-cake warnings, shown under Module."
+ },
+ "fq-no-weights": {
+  "text": "FQ-CoDel ignores queue weights",
+  "grade": "cited",
+  "mechanism": "FQ-CoDel hashes packets into its own per-flow queues and serves them equally.",
+  "sources": [
+   {
+    "url": "https://forum.opnsense.org/index.php?topic=26762.0",
+    "locator": "2022 thread",
+    "quote": "Apparently with fq_codel that's not possible since it ignores the weights chosen in the queue.",
+    "secondary": true
+   }
+  ],
+  "verify": "Two queues with weights 80/20 on an FQ-CoDel pipe share 50/50 under load."
+ },
+ "cake-no-weights": {
+  "text": "CAKE ignores queue weights",
+  "grade": "inference",
+  "mechanism": "CAKE sorts packets into tins by DSCP and shares per flow and host; os-cake has no queue-to-tin mapping, so a queue weight has nothing to act on.",
+  "sources": [
+   {
+    "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/DESIGN.md",
+    "locator": "feature table",
+    "quote": "`fwmark` tin override | no; ipfw's `setdscp` action can mark packets for a tin instead"
+   }
+  ],
+  "verify": "Lab: two queues with weights 80/20 on one CAKE pipe under load (not yet run)."
+ },
+ "kern-hz": {
+  "text": "At 100 Hz the shaper is coarse",
+  "grade": "cited",
+  "mechanism": "dummynet releases packets once per clock tick; FreeBSD drops to 100 Hz in a VM.",
+  "sources": [
+   {
+    "url": "https://github.com/pletch/opnsense-cake/blob/5512f41169f7a4ea2e9d053e510b3d686db91916/README.md",
+    "locator": "OPNsense in a VM",
+    "quote": "If OPNsense runs in a VM, set `kern.hz` to 1000."
+   }
+  ],
+  "verify": "sysctl kern.hz, shown on this page."
+ },
+ "shared-forwarding": {
+  "text": "Without shared forwarding, policy-routed traffic skips the shaper",
+  "grade": "cited",
+  "mechanism": "pf's route-to sends the packet out directly, so ipfw never sees it unless the forwarding decision is shared.",
+  "sources": [
+   {
+    "url": "https://github.com/opnsense/core/blob/878f219d71b49a0d7b7df58cea9ba30af5960854/src/www/system_advanced_firewall.php",
+    "locator": "lines 450-458",
+    "quote": "Using policy routing in the packet filter rules causes packets to skip processing for the traffic shaper"
+   }
+  ],
+  "verify": "net.pf.share_forward and share_forward6, shown on this page."
+ },
+ "ack-filter": {
+  "text": "On very lopsided lines, removing redundant download acknowledgements frees upload capacity.",
+  "grade": "cited",
+  "mechanism": "When a newer ACK for the same flow is queued, older pure ACKs that it supersedes are dropped from the upload queue.",
+  "sources": [
+   {
+    "url": "https://www.mail-archive.com/cake@lists.bufferbloat.net/msg01865.html",
+    "quote": "on a 30/1 Mbps link with a bidirectional traffic test (RRUL), turning on the ACK filter on the upstream link improves downstream throughput by ~20% (both modes)",
+    "locator": ""
+   },
+   {
+    "url": "https://www.mail-archive.com/cake@lists.bufferbloat.net/msg01865.html",
+    "quote": "we do not recommend turning it on everywhere: on more symmetrical link bandwidths the effect is negligible at best.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.reddit.com/r/HomeNetworking/comments/fvhr4w/psa_sqm_cake_nat_and_bufferbloat_tuning/",
+    "quote": "certainly don't use it if your up/down ratio is less than 15/1 - and it won't help on quic traffic.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.reddit.com/r/HomeNetworking/comments/fvhr4w/psa_sqm_cake_nat_and_bufferbloat_tuning/",
+    "quote": "ack-filter is the less aggressive option. I wish we hadn't even shipped the ack-filter-aggressive option!",
+    "locator": ""
+   },
+   {
+    "url": "https://www.mail-archive.com/cake@lists.bufferbloat.net/msg01875.html",
+    "quote": "Doing the filtering in TCP has the immense advantage of knowing the RTT and thus be able to use heuristics causing less damage.",
+    "locator": ""
+   },
+   {
+    "url": "https://forum.opnsense.org/index.php?topic=46990.0",
+    "quote": ">98% of the packets on the upload pipe during the tests were ACKs",
+    "locator": ""
+   },
+   {
+    "url": "https://tangentsoft.com/mikrotik/wiki?name=CAKE+Configuration",
+    "quote": "Otherwise, CAKE’s ACK filtering can have no effect since WireGuard is a UDP protocol, and any TCP headers inside the tunnel are encrypted.",
+    "locator": ""
+   }
+  ],
+  "contested": "Our sources disagree on this; the value is a starting point, not a settled number."
+ },
+ "bottleneck": {
+  "text": "A shaper only helps if it is the slowest point on the path, because that is where the queue forms.",
+  "grade": "expert",
+  "mechanism": "Packets queue at the slowest hop. If that hop is the ISP's modem, our firewall never holds a queue and has nothing to manage. Sending slightly slower than the line moves the queue into our firewall.",
+  "sources": [
+   {
+    "url": "https://arxiv.org/pdf/1804.07617.pdf",
+    "quote": "A queue management algorithm is only effective if it is in control of the bottleneck queue.",
+    "locator": ""
+   },
+   {
+    "url": "https://github.com/dlukel/MaCake",
+    "quote": "a pipe only owns the queue while it is the bottleneck, so it has to sit under your line rate.",
+    "locator": ""
+   }
+  ]
+ },
+ "diffserv-mode": {
+  "text": "Priorities use four levels (Interactive, Streaming, Normal, Background); without priorities, everything is one fair level.",
+  "grade": "expert",
+  "mechanism": "diffserv4 maps DSCP to Voice/Video/Best Effort/Bulk tins; besteffort uses one tin.",
+  "sources": [
+   {
+    "url": "https://man7.org/linux/man-pages/man8/tc-cake.8.html",
+    "quote": "diffserv3 (default) … Bulk (CS1, LE…), 6.25% threshold … Best Effort (general), 100% threshold … Voice (CS7, CS6, EF, VA, TOS4), 25% threshold",
+    "locator": ""
+   },
+   {
+    "url": "https://news.ycombinator.com/item?id=17448022",
+    "quote": "if you want less latency, you must want less bandwidth. It's the only safe answer to apps gaming the diffserv markings.",
+    "locator": ""
+   },
+   {
+    "url": "https://tangentsoft.com/mikrotik/wiki?name=CAKE+Configuration",
+    "quote": "Enabling any of the `diffserv*` options without actually applying the related markers burns CPU time to no useful end.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.reddit.com/r/HomeNetworking/comments/fvhr4w/psa_sqm_cake_nat_and_bufferbloat_tuning/",
+    "quote": "On the whole I find fq & aqm (and bql/aql/htb/cake besteffort, and better congestion control algorithms) far more effective than diffserv.",
+    "locator": ""
+   }
+  ],
+  "contested": "Our sources disagree on this; the value is a starting point, not a settled number."
+ },
+ "first-match": {
+  "text": "The first matching shaper rule wins; our rules sit after yours, so your hand-made rule keeps its traffic.",
+  "grade": "cited",
+  "mechanism": "With net.inet.ip.fw.one_pass=1 a packet leaving a pipe is not passed through the firewall again.",
+  "sources": [
+   {
+    "url": "https://man.freebsd.org/cgi/man.cgi?query=ipfw&sektion=8",
+    "quote": "net.inet.ip.fw.one_pass : 1 When set, the packet exiting from the dummynet pipe or from ng_ipfw(4) node is not passed though the firewall again.",
+    "locator": ""
+   },
+   {
+    "url": "https://forum.opnsense.org/index.php?topic=43354.0",
+    "quote": "My stupidity... missed sequence option - changed those so high priority first and appears to be working as expected now.",
+    "locator": ""
+   }
+  ]
+ },
+ "fq-codel-per-flow": {
+  "text": "Without CAKE, sharing is fair per connection, not per device: a device with many downloads gets more.",
+  "grade": "expert",
+  "mechanism": "FQ-CoDel hashes each 5-tuple into its own queue and serves queues in turn; it has no notion of hosts.",
+  "sources": [
+   {
+    "url": "https://news.ycombinator.com/item?id=17448022",
+    "quote": "fq_codel is fair to flows, not devices ... Adding per host fq (while retaining per flow fq), even through nat, was the number 1 request from the users for sch_cake, and one of the main reasons why cake exists.",
+    "locator": ""
+   },
+   {
+    "url": "https://news.ycombinator.com/item?id=17448022",
+    "quote": "Smart queue (fq_codel + htb) does not do per-host fairness, only per flow fairness. So a single host on the LAN can still hog all the bandwidth.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.reddit.com/r/opnsense/comments/1tz77d7/",
+    "quote": "when steam downloads it causes Youtube to buffer as it gets only about a 1Mbps bandwidth",
+    "locator": ""
+   }
+  ]
+ },
+ "headroom-percent": {
+  "text": "The managed speed is about 95% of measured capacity when we know your line type, and about 92% when we don't; download sits a little lower than upload.",
+  "grade": "expert",
+  "mechanism": "Without per-packet overhead compensation the shaper under-counts on-wire bytes, so it needs a larger margin. Download is shaped after the bottleneck, so it needs more margin than upload.",
+  "sources": [
+   {
+    "url": "https://github.com/pletch/opnsense-cake",
+    "quote": "With a link type set, the pipe bandwidth can be close to the line or sync rate; without one, set it 5–15% below.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.bigiron.cc/guides/fixing-bufferbloat-with-fq-codel-shaping-on-opnsense",
+    "quote": "Download pipe bandwidth | 90-95% of measured sustained down",
+    "locator": ""
+   },
+   {
+    "url": "https://docs.opnsense.org/manual/how-tos/shaper_bufferbloat.html",
+    "quote": "Set initially to 85% of ISP advertised BW, tune later",
+    "locator": ""
+   },
+   {
+    "url": "https://arxiv.org/abs/1804.07617",
+    "quote": "We believe it is safe to set a rate within 0.1% of the actual link rate when the overhead compensation is configured correctly, with a margin mainly required to accommodate slight variations in the actual bottleneck link bandwidth, caused by, e.g., clock drift in the hardware.",
+    "locator": ""
+   },
+   {
+    "url": "https://forum.mikrotik.com/t/fq-codel-cake-stories/181067",
+    "quote": "typically you can put cake with the exact, correct, framing hard up against the upload limit (and also use ack-filter there). On downloads, tho, no more than 92%.",
+    "locator": ""
+   },
+   {
+    "url": "https://lists.bufferbloat.net/cake/CAA93jw6k-esNU8by-Z=j7n0SVTVGPY6=Z+nR_TGwdLGSVOCi+Q@mail.gmail.com/",
+    "quote": "never satisifed with the 85% magic number we use to come up with a set rate for inbound shaping.",
+    "locator": ""
+   },
+   {
+    "url": "https://forum.opnsense.org/index.php?topic=46990.0",
+    "quote": "I saw that in the past when I over-optimized the shaper by not leaving enough headroom",
+    "locator": ""
+   }
+  ],
+  "contested": "Our sources disagree on this; the value is a starting point, not a settled number."
+ },
+ "host-isolation": {
+  "text": "Each device gets a fair share of the line, however many connections it opens.",
+  "grade": "cited",
+  "mechanism": "CAKE divides each flow's turn (DRR quantum) by the number of busy flows its host has, so a device with 20 downloads gets the same total as a device with 1. No marking is needed.",
+  "sources": [
+   {
+    "url": "https://arxiv.org/abs/1804.07617",
+    "quote": "With flow fairness, hosts can increase their share of the available bandwidth by splitting their traffic over multiple flows.",
+    "locator": ""
+   },
+   {
+    "url": "https://arxiv.org/pdf/1804.07617.pdf",
+    "quote": "When a flow is scheduled, its \"host load\" is calculated as the maximum of the reference counts for its source and destination IP addresses. The effective quantum of the flow is simply divided by this load value",
+    "locator": ""
+   },
+   {
+    "url": "https://github.com/pletch/opnsense-cake/blob/main/VERIFICATION.md",
+    "quote": "dual-srchost | 47% (50%) [upload via NAT] | 11% (11%)",
+    "locator": ""
+   }
+  ]
+ },
+ "icmpv6-control": {
+  "text": "IPv6 control messages get their own small lane, so gateway monitoring and IPv6 keep working when the line is full.",
+  "grade": "measured-lab",
+  "mechanism": "ICMPv6 (neighbour discovery, router advertisements, gateway pings) is matched before the catch-all and sent to a small separate pipe in each direction, so it never waits behind bulk traffic.",
+  "sources": [
+   {
+    "url": "https://docs.opnsense.org/manual/how-tos/shaper_bufferbloat.html",
+    "quote": "If you are running IPv6 or any dynamic routing protocol, consider creating a Control plane specific class",
+    "locator": ""
+   },
+   {
+    "url": "https://forum.opnsense.org/index.php?topic=46990.0",
+    "quote": "Basically, using the traffic shaper breaks IPv6 connectivity under high load.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.reddit.com/r/opnsense/comments/1h25g1y/",
+    "quote": "Whenever I upload, OPNsense gateway monitoring sees 90%+ packet loss to the first hop in my ISP's network, and OPNsense marks the gateway offline",
+    "locator": ""
+   },
+   {
+    "url": "https://github.com/opnsense/core/issues/6714",
+    "quote": "Apparently `icmp` does not include IPv6 ICMP packets.",
+    "locator": ""
+   }
+  ],
+  "contested": "Our sources disagree on this; the value is a starting point, not a settled number."
+ },
+ "one-limit-per-cable": {
+  "text": "Internet links (VLANs) that share one cable share one speed limit.",
+  "grade": "inference",
+  "mechanism": "All VLANs on one physical hand-off share its bottleneck. Separate limits per VLAN would add up to more than the cable, and the queue would move back into the ISP's box.",
+  "sources": [
+   {
+    "url": "https://arxiv.org/pdf/1804.07617.pdf",
+    "quote": "A queue management algorithm is only effective if it is in control of the bottleneck queue.",
+    "locator": ""
+   },
+   {
+    "url": "https://forum.opnsense.org/index.php?topic=37307.0",
+    "quote": "With 2 pipes, 150/150 and 30/15, the firewall expects the total bandwidth available to be 180/165",
+    "locator": ""
+   },
+   {
+    "url": "https://www.bufferbloat.net/projects/bloat/wiki/Bufferbloat_FAQs/",
+    "quote": "Connect _all_ your equipment to the new router. (Do not leave any equipment connected to the old device - it will throw off the anti-bufferbloat algorithms.)",
+    "locator": ""
+   }
+  ]
+ },
+ "overhead-preset": {
+  "text": "Telling us what plugs into the wall lets us count each packet's real size on the wire, so we can run closer to full speed.",
+  "grade": "cited",
+  "mechanism": "Each packet is charged its IP size plus the framing the link adds (Ethernet 38 bytes, +4 per VLAN tag, PPPoE, DOCSIS, PTM). os-cake applies this by adjusting the pipe credit.",
+  "sources": [
+   {
+    "url": "https://man7.org/linux/man-pages/man8/tc-cake.8.html",
+    "quote": "ethernet — Accounts for Ethernet's preamble, inter-frame gap, and Frame Check Sequence. Use this keyword when the bottleneck being shaped for is an actual Ethernet cable. Equivalent to overhead 38 mpu 84 noatm",
+    "locator": ""
+   },
+   {
+    "url": "https://man7.org/linux/man-pages/man8/tc-cake.8.html",
+    "quote": "ether-vlan — Adds 4 bytes to the overhead compensation, accounting for an IEEE 802.1Q VLAN header",
+    "locator": ""
+   },
+   {
+    "url": "https://forum.openwrt.org/t/sqm-settings-questions/176687",
+    "quote": "Tl; dr: don't overthink the per packet overhead, if in doubt, (slightly) over estimate it instead...",
+    "locator": ""
+   },
+   {
+    "url": "https://www.reddit.com/r/HomeNetworking/comments/fvhr4w/psa_sqm_cake_nat_and_bufferbloat_tuning/",
+    "quote": "It helps to get framing right, or at least set conservatively. while there is a specific docsis (cablemodem) mode, getting dsl right is harder.",
+    "locator": ""
+   }
+  ],
+  "contested": "Our sources disagree on this; the value is a starting point, not a settled number."
+ },
+ "tins-capped": {
+  "text": "Priorities are shares, not absolute rules: a level goes first only up to its share of the line.",
+  "grade": "cited",
+  "mechanism": "Each CAKE tin has a threshold. Below it the tin gets a high \"priority sharing\" weight; above it, a lower \"bandwidth sharing\" weight. diffserv4 thresholds: Voice 1/4, Video 1/2, Best Effort all, Bulk 1/16.",
+  "sources": [
+   {
+    "url": "https://man7.org/linux/man-pages/man8/tc-cake.8.html",
+    "quote": "tin weights have a 'priority sharing' value when bandwidth used by that tin is below a threshold, and a lower 'bandwidth sharing' value when above",
+    "locator": ""
+   },
+   {
+    "url": "https://www.mail-archive.com/cake@lists.bufferbloat.net/msg01913.html",
+    "quote": "If the shaper is in use, each priority tier gets its own virtual clock, which limits that tier's rate to a fraction of the overall shaped rate, to discourage trying to game the priority mechanism.",
+    "locator": ""
+   },
+   {
+    "url": "https://github.com/pletch/opnsense-cake/blob/main/DESIGN.md",
+    "quote": "Tin rate thresholds: priority within share (Bulk 1/16, Video 1/2, Voice 1/4)",
+    "locator": ""
+   }
+  ],
+  "contested": "Our sources disagree on this; the value is a starting point, not a settled number."
+ },
+ "verify-after-apply": {
+  "text": "After every Apply we compare what was saved with what the kernel actually runs, and tell you if they differ.",
+  "grade": "measured-lab",
+  "mechanism": "OPNsense's reload can exit successfully while the kernel keeps old objects or refuses a change on a busy flowset; the plugin reads back dnctl/ipfw state instead of trusting the exit code.",
+  "sources": [
+   {
+    "url": "https://github.com/opnsense/core/issues/10893",
+    "quote": "`dnctl` exits 0 and prints nothing, so OPNsense believes the apply succeeded.",
+    "locator": ""
+   },
+   {
+    "url": "https://github.com/opnsense/core/issues/8649",
+    "quote": "the GUI tells me that it's changed. But the effect doesn't happen in the real world until I reboot the system.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.reddit.com/r/openwrt/comments/1hn02ra/",
+    "quote": "It ended up being that my SQM was on the wrong interface, and was doing nothing at all.",
+    "locator": ""
+   }
+  ]
+ },
+ "wash-download": {
+  "text": "Priority marks arriving from the internet are not trusted by default; all incoming traffic starts equal.",
+  "grade": "expert",
+  "mechanism": "External DSCP is set by strangers or rewritten by ISPs (e.g. remarked to CS1), so download classification from it would be random. CAKE's wash zeroes DSCP; besteffort ignores it.",
+  "sources": [
+   {
+    "url": "https://help.mikrotik.com/docs/display/ROS/CAKE",
+    "quote": "without relying on potentially unreliable markings from external sources",
+    "locator": ""
+   },
+   {
+    "url": "https://www.man7.org/linux/man-pages/man8/tc-cake.8.html",
+    "quote": "If you are shaping inbound, and cannot trust the diffserv markings (as is the case for Comcast Cable, among others), it is best to use a single queue \"besteffort\" mode with wash.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.reddit.com/r/HomeNetworking/comments/fvhr4w/psa_sqm_cake_nat_and_bufferbloat_tuning/",
+    "quote": "Because comcast remarks most traffic to cs1, prioritizing those packets on switches, deprioritizing them on wifi - which can really make your wifi suck.",
+    "locator": ""
+   },
+   {
+    "url": "https://www.mail-archive.com/cake@lists.bufferbloat.net/msg01913.html",
+    "quote": "this commit also adds an optional DiffServ 'wash' mode, which will zero out the DSCP fields of any packet passing through CAKE.",
+    "locator": ""
+   }
+  ],
+  "contested": "Our sources disagree on this; the value is a starting point, not a settled number."
+ },
+ "host-isolation-per-address": {
+  "text": "CAKE's \"device\" is an address: a device that sends over IPv4 and IPv6 at the same time, or from several IPv6 privacy addresses, counts once per address and gets that many shares.",
+  "grade": "measured-lab",
+  "mechanism": "dn_cake hashes the whole source (upload) or destination (download) address as the host key: 4 bytes for IPv4, all 16 bytes for IPv6 (cake_hash_flow, jenkins_hash over alen bytes). There is no mask, NAT lookup for IPv6, or override, so an IPv4 and an IPv6 address of one device are two hosts.",
+  "sources": [
+   {
+    "url": "https://arxiv.org/abs/1804.07617",
+    "quote": "This can be prevented by providing host fairness at the endpoint IP address level, which CAKE can do in addition to flow fairness.",
+    "locator": ""
+   },
+   {
+    "url": "https://man7.org/linux/man-pages/man8/tc-cake.8.html",
+    "quote": "Flows are defined by the 5-tuple, and fairness is applied first over source addresses, then over individual flows.",
+    "locator": ""
+   }
+  ]
+ }
+}

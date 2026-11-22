@@ -1,0 +1,44 @@
+<form>
+    <field>
+        <id>shaperinsight.bufferbloat.download_url</id>
+        <label>Download from</label>
+        <type>text</type>
+        <help>Each download stream fetches this URL until the phase ends. Default: Cloudflare's speed test download (speed.cloudflare.com), which serves test data for this purpose; Cloudflare sees your public address and the test traffic. Cloudflare refuses requests above about 100 MB (HTTP 403, tested 2026-11-22), so the default asks for 90 MB and each stream starts again when it is done. Ex. https://speed.cloudflare.com/__down?bytes=90000000, or a large file on a server of your own.</help>
+    </field>
+    <field>
+        <id>shaperinsight.bufferbloat.upload_url</id>
+        <label>Upload to</label>
+        <type>text</type>
+        <help>Each upload stream POSTs zeros to this URL. Default: Cloudflare's speed test upload. Ex. https://speed.cloudflare.com/__up</help>
+    </field>
+    <field>
+        <id>shaperinsight.bufferbloat.reflectors</id>
+        <label>Measure the delay to</label>
+        <type>text</type>
+        <help>One to five IPv4 addresses that answer ping, comma separated; the WAN gateway is always added. Defaults: 1.1.1.1 (Cloudflare) and 9.9.9.9 (Quad9), plus the WAN gateway; as few third parties as gives a fair median. Add one of your own if a target limits ping. Ex. 1.1.1.1,9.9.9.9</help>
+    </field>
+    <field>
+        <id>shaperinsight.bufferbloat.streams</id>
+        <label>Parallel streams</label>
+        <type>text</type>
+        <help>Streams per direction. 4 is what the RRUL test uses; more fills a fast line sooner. Ex. 4.</help>
+    </field>
+    <field>
+        <id>shaperinsight.bufferbloat.phase_seconds</id>
+        <label>Seconds per loaded phase</label>
+        <type>text</type>
+        <help>Download, upload and both each run this long (idle is 10 s, cool-down 5 s). At least 10, because buffers take about that long to fill. Ex. 15 (about 70 s in total).</help>
+    </field>
+    <field>
+        <id>shaperinsight.bufferbloat.cap_mbit</id>
+        <label>Cap the load at (Mbit/s)</label>
+        <type>text</type>
+        <help>0 = no cap. A cap bounds the data used on a metered line; set it at or above your shaper rate (ex. the managed rate × 1.2), or the line never fills and the test shows too little delay.</help>
+    </field>
+    <field>
+        <id>shaperinsight.bufferbloat.label</id>
+        <label>Label for the next result</label>
+        <type>text</type>
+        <help>Kept with the result in the history. Ex. "shaper on, evening".</help>
+    </field>
+</form>

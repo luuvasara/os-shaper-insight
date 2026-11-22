@@ -1,0 +1,21 @@
+<metadata>
+    <shaperinsight>
+        <filename>ShaperInsight.js</filename>
+        <link>/ui/shaperinsight/</link>
+        <endpoints>
+            <endpoint>/api/shaperinsight/status/summary</endpoint>
+        </endpoints>
+        <translations>
+            <title>Shaper status</title>
+            <ok>OK</ok>
+            <note>Note</note>
+            <check>Check</check>
+            <problem>Problem</problem>
+            <pipe>Pipe</pipe>
+            <pipes>Pipes</pipes>
+            <notloaded>not loaded</notloaded>
+            <nopipes>No shaper pipes yet: set up the shaper</nopipes>
+            <unavailable>Shaper status is not available right now</unavailable>
+        </translations>
+    </shaperinsight>
+</metadata>

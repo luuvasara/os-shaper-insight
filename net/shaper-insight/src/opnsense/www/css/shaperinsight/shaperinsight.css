@@ -1,0 +1,199 @@
+/*
+ * Copyright (C) 2026 os-shaper-insight contributors
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+ * AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+ * OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * Shaper Insight page styles. Colours are not set here: they come from the active
+ * OPNsense theme (Bootstrap classes, currentColor, the theme's own CSS variables), so
+ * the light and dark themes both apply. Spacing uses one 4/8 px scale below.
+ */
+.sa-page, .sa-section {
+    --sa-space-1: 4px;
+    --sa-space-2: 8px;
+    --sa-space-3: 16px;
+    --sa-space-4: 24px;
+    --sa-chart-height: 280px;
+}
+.sa-section { padding: var(--sa-space-3); }
+.sa-section h2 { font-size: 1.35em; margin: 0 0 var(--sa-space-2); }
+.sa-section h4 { margin: var(--sa-space-3) 0 var(--sa-space-2); }
+.sa-head { padding: var(--sa-space-3) var(--sa-space-3) 0; }
+
+.sa-lead { max-width: 75ch; line-height: 1.5; }
+.sa-meta { line-height: 1.5; }
+.sa-table td, .sa-table th { vertical-align: top; line-height: 1.5; }
+.sa-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sa-kv th { width: 14em; }
+.sa-badge { display: inline-block; margin-right: var(--sa-space-1); white-space: nowrap; }
+.sa-chart-box { position: relative; height: var(--sa-chart-height); }
+/* term chips: a button that looks like underlined text, with a visible focus ring */
+.sa-term {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+    cursor: help;
+    min-height: 24px;
+}
+.sa-term:focus-visible, .sa-why:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.sa-why { padding: 0 var(--sa-space-1); vertical-align: baseline; min-height: 24px; }
+.sa-def dt { margin-top: var(--sa-space-2); }
+/* long lines wrap instead of hiding behind a scrollbar that headless and overlay-scrollbar
+   browsers do not draw; copy and download still use the original lines */
+.sa-panel pre { max-height: 480px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: break-word; }
+.sa-toolbar { display: flex; flex-wrap: wrap; gap: var(--sa-space-2); align-items: center; margin-bottom: var(--sa-space-3); }
+.sa-panel-tools { display: flex; flex-wrap: wrap; gap: var(--sa-space-2); margin-bottom: var(--sa-space-2); }
+@media (max-width: 767px) {
+    .sa-page, .sa-section { --sa-chart-height: 220px; }
+    .sa-kv th { width: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+    .fa-spinner, .fa-pulse { animation-duration: 2.5s !important; animation-iteration-count: infinite !important; }
+}
+/* status words: the text keeps the theme's body colour (full contrast); only the icon is coloured */
+.sa-badge { font-weight: 600; }
+.sa-summary { display: flex; gap: var(--sa-space-3); align-items: center; padding: var(--sa-space-3);
+    border: 1px solid; border-left-width: 6px; border-radius: 4px; margin-bottom: var(--sa-space-2); }
+.sa-summary p { margin: 0; font-size: 1.1em; line-height: 1.5; }
+.sa-section h3 { font-size: 1.1em; margin: var(--sa-space-3) 0 var(--sa-space-2); }
+/* "Why?" and page links use the body text colour, underlined: the dark theme's link colour
+   (#c03e14 on #373736) is 2.2:1, below WCAG 1.4.3's 4.5:1 */
+.sa-section .sa-why, .sa-section .sa-why:hover, .sa-meta a, .sa-section td a, .sa-lead a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+/* narrow screens: findings tables become one card per row, each cell labelled by its column */
+@media (max-width: 767px) {
+    .sa-stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .sa-stack, .sa-stack tbody, .sa-stack tr, .sa-stack td, .sa-stack th { display: block; width: 100%; }
+    .sa-stack tr { border-top: 1px solid; padding: var(--sa-space-2) 0; }
+    .sa-stack td, .sa-stack th { border: 0 !important; padding: var(--sa-space-1) 0 !important; text-align: left; white-space: normal; }
+    .sa-stack td[data-label]::before { content: attr(data-label) ": "; font-weight: 600; }
+}
+
+/* health checks: native <details>, keyboard and screen-reader behaviour come from the browser */
+.sa-check { border-top: 1px solid rgba(128, 128, 128, 0.3); padding: var(--sa-space-2) 0; }
+.sa-check > summary { display: list-item; cursor: pointer; font-weight: 600; min-height: 24px; }
+.sa-check-id { font-variant-numeric: tabular-nums; }
+.sa-check-items { list-style: none; padding-left: var(--sa-space-3, 16px); margin: var(--sa-space-2) 0 0; }
+.sa-check-items > li { margin-bottom: var(--sa-space-2); }
+.sa-why-text { margin-left: 1.6em; }
+
+/* wizard preview */
+.sa-signals { list-style: none; padding: 0; margin: 0; }
+.sa-add { font-weight: 700; font-family: monospace; }
+#sa-rates label { margin-right: var(--sa-space-1); }
+#sa-rates .form-control { width: 8em; margin-right: var(--sa-space-3); }
+@media (max-width: 767px) {
+    #sa-rates .form-control { width: 100%; margin: 0 0 var(--sa-space-2); }
+}
+.sa-plain { padding-left: 1.2em; }
+.sa-plain > li { margin-bottom: var(--sa-space-1); }
+.sa-steps > li { margin-bottom: var(--sa-space-1); }
+.sa-contested { font-style: italic; }
+.sa-contested::before { content: "\26A0  "; font-style: normal; }
+.sa-choice { margin-top: var(--sa-space-2); }
+.sa-legend { font-size: inherit; font-weight: 600; border: 0; margin-bottom: var(--sa-space-1); }
+.sa-choice label { font-weight: normal; min-height: 24px; }
+#sa-apply-state { margin-top: var(--sa-space-2); font-weight: 600; }
+
+/* apply countdown banner: fixed at the top of the content column on every page that shows it */
+.sa-countdown { position: fixed; top: 0; z-index: 1030; box-sizing: border-box; box-shadow: 0 2px 8px rgba(0,0,0,0.25); display: flex; flex-wrap: wrap; align-items: center;
+    gap: var(--sa-space-3); padding: var(--sa-space-3); margin: 0 0 var(--sa-space-3);
+    background: var(--sa-cd-bg, #fff8e1); color: #1d1d1f; border: 2px solid #b35c00; border-radius: 4px; }
+.sa-cd-num { font-size: 40px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; min-width: 2.5em; }
+.sa-cd-num small { font-size: 16px; }
+.sa-cd-text { flex: 1 1 280px; font-size: 15px; }
+.sa-countdown .btn { min-height: 44px; font-size: 16px; }
+.sa-countdown.sa-cd-urgent { border-width: 4px; border-color: #a50e0e; }
+.sa-cd-btn, .sa-cd-btn:hover, .sa-cd-btn:focus { background: #1d1d1f; color: #fff; border-color: #1d1d1f; }
+
+/* priorities page */
+.sa-intro { padding: 12px 15px; }
+.sa-pick-has { font-weight: 600; }
+#sa-devices td, #sa-aliases td { vertical-align: middle; overflow-wrap: anywhere; }
+#sa-devices td:last-child, #sa-aliases td:last-child { white-space: nowrap; width: 1%; }
+/* an empty or error row spans both columns: it must wrap (it is also the last child) */
+#sa-devices td[colspan], #sa-aliases td[colspan] { white-space: normal; width: auto; }
+/* secondary text: the theme's body colour, slightly lighter; bootstrap's text-muted is below
+   4.5:1 on white (axe color-contrast). No colour of our own, so both themes apply */
+.sa-note { color: inherit; opacity: 0.85; }
+
+/* bufferbloat page: three stacked charts on one time axis */
+.sa-grade { font-size: 2em; padding: 6px 14px; }
+.sa-bb-chart { position: relative; height: 220px; margin-top: var(--sa-space-2); }
+.sa-bb-chart.sa-bb-top { height: 240px; }
+@media (max-width: 767px) { .sa-bb-chart, .sa-bb-chart.sa-bb-top { height: 260px; } }
+/* grade badges: the letter carries the meaning, in the body colour. The theme's label-success
+   (1.8:1) and text-success both fail 4.5:1 on white (axe), so no colour here */
+.sa-g, .sa-g.text-success, .sa-g.text-warning, .sa-g.text-danger { display: inline-block; color: inherit;
+    border: 2px solid currentColor; border-radius: 4px; padding: 0 6px; font-weight: 700; }
+.sa-grade { font-size: 2em; padding: 2px 12px; }
+
+/* glossary page (literal sizes: the --sa-space-* tokens are scoped to .sa-page/.sa-section) */
+.sa-gl-mixups { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.sa-gl-mix { border: 1px solid; border-left-width: 4px; border-radius: 4px; padding: 8px 12px; }
+.sa-gl-mix p { margin: 0 0 6px; }
+.sa-gl-lbl { display: block; font-size: 0.85em; font-variant: small-caps; letter-spacing: 0.03em; opacity: 0.85; font-weight: 600; }
+/* 24 px targets (WCAG 2.5.8): chips, anchors and the group index are links of their own, not words in a sentence */
+.sa-gl-chip, .sa-gl-anchor, .sa-gl-index a { display: inline-block; min-height: 24px; min-width: 24px; line-height: 24px;
+    padding: 0 4px; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.sa-gl-chip { text-decoration-style: dotted; margin-right: 8px; }
+.sa-gl-index { list-style: none; padding: 0; margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.sa-gl-index li { display: inline-block; }
+.sa-gl-term { border-top: 1px solid; padding: 10px 0; scroll-margin-top: 80px; }
+.sa-gl-term h3 { font-size: 1.15em; margin: 0 0 6px; }
+.sa-gl-target { outline: 2px solid currentColor; outline-offset: 4px; }
+.sa-gl-group { margin-top: 16px; }
+.sa-def dt { font-size: 0.85em; font-variant: small-caps; letter-spacing: 0.03em; opacity: 0.85; }
+.sa-def dd { margin: 0 0 6px; overflow-wrap: anywhere; }
+.sa-def dd a { display: inline-block; min-height: 24px; line-height: 24px; }
+/* source links in the body colour, underlined: the dark theme's link colour is 2.2:1 */
+.sa-def dd a, .sa-def dd a:hover { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+
+/* setup step 2: the line type names must be readable, the speed fields need only six digits */
+#sa-rates-table .sa-line { width: auto; min-width: min(24em, 100%); max-width: 100%; }
+#sa-rates-table .sa-down, #sa-rates-table .sa-up { width: 9em; max-width: 100%; }
+#sa-ifs .sa-pick, #sa-ifs input[type=checkbox] { width: 18px; height: 18px; vertical-align: middle; }
+
+/* sharing page */
+.sa-pipe { border-top: 1px solid var(--chart-js-border-color, rgba(128,128,128,0.3)); padding-top: 12px; margin-top: 16px; }
+.sa-pipe:first-child { border-top: 0; margin-top: 0; }
+.sa-section .sa-strip { height: 140px; }
+.sa-inline-select { display: inline-block; width: auto; min-height: 32px; margin: 0 8px 0 4px; }
+.sa-explain { max-width: 75ch; margin: 8px 0; }
+.sa-explain summary { cursor: pointer; min-height: 24px; }
+.sa-latest { max-width: 640px; }
+.sa-latest caption { caption-side: top; color: inherit; }

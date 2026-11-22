@@ -1,0 +1,44 @@
+
+# Copyright (C) 2026 os-shaper-insight contributors
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice,
+#    this list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES,
+# INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+# AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY,
+# OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# os-shaper-insight, after the package files are gone. Only the runtime pieces that cannot
+# work without the plugin go; the configuration, the ledger and restore points in /conf and
+# the bufferbloat results in /var/db stay (OPNsense convention: config survives uninstall).
+if [ -z "${PKG_UPGRADE}" ]; then
+	rm -f /var/run/shaperinsight.lock /var/run/shaperinsight-apply.lock \
+	    /var/run/shaperinsight-bb.lock /var/run/shaperinsight-prio.lock \
+	    /var/run/shaperinsight-prio.json /var/run/shaperinsight-ipfw-reload \
+	    /var/run/shaperinsight-prio.removing
+	rm -rf /var/run/shaperinsight /var/run/shaperinsight-bb \
+	    /usr/local/opnsense/scripts/shaperinsight/__pycache__ \
+	    /usr/local/opnsense/scripts/shaperinsight/lib/__pycache__
+	# pkg removes the then empty directories itself (removing them here makes it warn)
+	# rc.conf.d/ipfw is gone, so core's own rule script runs at the next reload; the marks were
+	# already purged before the delete, so no reload is needed now (it would zero every rule
+	# counter, review N5). Cron is rebuilt only when it still has the priority refresh job.
+	if crontab -l -u root 2>/dev/null | grep -q shaperinsight; then
+		/usr/local/sbin/configctl cron restart >/dev/null 2>&1
+	fi
+fi

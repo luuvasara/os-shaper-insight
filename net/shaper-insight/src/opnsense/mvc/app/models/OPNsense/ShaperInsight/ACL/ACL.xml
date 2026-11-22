@@ -1,0 +1,21 @@
+<acl>
+    <page-firewall-shaperinsight>
+        <name>Firewall: Shaper: Shaper Insight</name>
+        <patterns>
+            <pattern>ui/shaperinsight/*</pattern>
+            <pattern>api/shaperinsight/*</pattern>
+        </patterns>
+    </page-firewall-shaperinsight>
+    <page-firewall-shaperinsight-status>
+        <name>Firewall: Shaper: Shaper Insight: status (read-only)</name>
+        <patterns>
+            <pattern>ui/shaperinsight/index</pattern>
+            <pattern>ui/shaperinsight/compiled</pattern>
+            <pattern>ui/shaperinsight/glossary</pattern>
+            <pattern>api/shaperinsight/status/*</pattern>
+            <pattern>api/shaperinsight/compiled/*</pattern>
+            <pattern>api/shaperinsight/glossary/*</pattern>
+            <pattern>api/shaperinsight/health/get</pattern>
+        </patterns>
+    </page-firewall-shaperinsight-status>
+</acl>

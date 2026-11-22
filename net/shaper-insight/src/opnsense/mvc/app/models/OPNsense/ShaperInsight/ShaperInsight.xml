@@ -1,0 +1,175 @@
+<model>
+    <mount>//OPNsense/ShaperInsight</mount>
+    <version>0.7.0</version>
+    <description>Shaper Insight: page preferences, link choices and device priorities</description>
+    <items>
+        <general>
+            <redact type="BooleanField">
+                <Default>1</Default>
+                <Required>Y</Required>
+            </redact>
+            <poll_seconds type="IntegerField">
+                <Default>5</Default>
+                <Required>Y</Required>
+                <MinimumValue>5</MinimumValue>
+                <MaximumValue>300</MaximumValue>
+                <ValidationMessage>Choose 5 to 300 seconds.</ValidationMessage>
+            </poll_seconds>
+            <!-- the history sampler (sampler.py): every 10 s, RRDs in /var/db/rrd, hosts for 6 h -->
+            <sampler type="BooleanField">
+                <Default>1</Default>
+                <Required>Y</Required>
+            </sampler>
+        </general>
+        <bufferbloat>
+            <!-- the load and the latency targets of the bufferbloat test; every default is a third
+                 party and the page names each one (project rule: no undisclosed third parties) -->
+            <download_url type="TextField">
+                <Default>https://speed.cloudflare.com/__down?bytes=90000000</Default>
+                <Required>Y</Required>
+                <Mask>/^https?:\/\/[A-Za-z0-9._~:\/?#@!$&amp;'()*+,;=%-]{3,250}$/</Mask>
+                <ValidationMessage>Enter an http(s) URL that serves a large download.</ValidationMessage>
+            </download_url>
+            <upload_url type="TextField">
+                <Default>https://speed.cloudflare.com/__up</Default>
+                <Required>Y</Required>
+                <Mask>/^https?:\/\/[A-Za-z0-9._~:\/?#@!$&amp;'()*+,;=%-]{3,250}$/</Mask>
+                <ValidationMessage>Enter an http(s) URL that accepts a large POST upload.</ValidationMessage>
+            </upload_url>
+            <reflectors type="TextField">
+                <Default>1.1.1.1,9.9.9.9</Default>
+                <Required>Y</Required>
+                <Mask>/^([0-9]{1,3}\.){3}[0-9]{1,3}(,([0-9]{1,3}\.){3}[0-9]{1,3}){0,4}$/</Mask>
+                <ValidationMessage>Enter one to five IPv4 addresses, comma separated (ex. 1.1.1.1,9.9.9.9).</ValidationMessage>
+            </reflectors>
+            <streams type="IntegerField">
+                <Default>4</Default>
+                <Required>Y</Required>
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>16</MaximumValue>
+                <ValidationMessage>Choose 1 to 16 parallel streams.</ValidationMessage>
+            </streams>
+            <phase_seconds type="IntegerField">
+                <Default>15</Default>
+                <Required>Y</Required>
+                <MinimumValue>10</MinimumValue>
+                <MaximumValue>60</MaximumValue>
+                <ValidationMessage>Choose 10 to 60 seconds (buffers take about 10 s to fill).</ValidationMessage>
+            </phase_seconds>
+            <cap_mbit type="IntegerField">
+                <Default>0</Default>
+                <Required>Y</Required>
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>100000</MaximumValue>
+                <ValidationMessage>Enter whole Mbit/s, 0 for no cap.</ValidationMessage>
+            </cap_mbit>
+            <label type="TextField">
+                <Mask>/^[^\x00-\x1f]{0,80}$/</Mask>
+            </label>
+        </bufferbloat>
+        <links>
+            <!-- the setup page's choices: a tick per detected interface (empty = what detection
+                 says), and each internet link's own speeds and line type by physical port -->
+            <choice type="ArrayField">
+                <interface type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[a-z][a-z0-9_]{0,31}$/</Mask>
+                    <ValidationMessage>An interface key such as wan or opt1.</ValidationMessage>
+                    <Constraints>
+                        <check001>
+                            <type>UniqueConstraint</type>
+                            <ValidationMessage>This interface already has a choice.</ValidationMessage>
+                        </check001>
+                    </Constraints>
+                </interface>
+                <include type="OptionField">
+                    <Required>Y</Required>
+                    <OptionValues>
+                        <yes>Internet link: shape it</yes>
+                        <no>Not an internet link: leave it alone</no>
+                    </OptionValues>
+                    <ValidationMessage>Choose yes (shape it) or no (leave it alone).</ValidationMessage>
+                </include>
+            </choice>
+            <link type="ArrayField">
+                <port type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[A-Za-z][A-Za-z0-9_.]{0,31}$/</Mask>
+                    <ValidationMessage>A physical port such as igb0.</ValidationMessage>
+                    <Constraints>
+                        <check001>
+                            <type>UniqueConstraint</type>
+                            <ValidationMessage>This port already has speeds.</ValidationMessage>
+                        </check001>
+                    </Constraints>
+                </port>
+                <download type="IntegerField">
+                    <Default>0</Default>
+                    <Required>Y</Required>
+                    <MinimumValue>0</MinimumValue>
+                    <MaximumValue>100000</MaximumValue>
+                    <ValidationMessage>Enter whole Mbit/s, 0 to 100000 (ex. 1000).</ValidationMessage>
+                </download>
+                <upload type="IntegerField">
+                    <Default>0</Default>
+                    <Required>Y</Required>
+                    <MinimumValue>0</MinimumValue>
+                    <MaximumValue>100000</MaximumValue>
+                    <ValidationMessage>Enter whole Mbit/s, 0 to 100000 (ex. 100).</ValidationMessage>
+                </upload>
+                <line type="OptionField">
+                    <Default>auto</Default>
+                    <Required>Y</Required>
+                    <OptionValues>
+                        <auto>Ethernet or fibre (worked out from the interface)</auto>
+                        <docsis>Cable (DOCSIS)</docsis>
+                        <pppoe-ptm>VDSL2 with PPPoE (PTM)</pppoe-ptm>
+                        <bridged-ptm>VDSL2 without PPPoE (PTM)</bridged-ptm>
+                        <pppoe-vcmux>ADSL, PPPoE VC-mux (ATM)</pppoe-vcmux>
+                        <pppoe-llcsnap>ADSL, PPPoE LLC/SNAP (ATM)</pppoe-llcsnap>
+                        <pppoa-vcmux>ADSL, PPPoA VC-mux (ATM)</pppoa-vcmux>
+                        <pppoa-llc>ADSL, PPPoA LLC (ATM)</pppoa-llc>
+                        <bridged-vcmux>ADSL, bridged VC-mux (ATM)</bridged-vcmux>
+                        <bridged-llcsnap>ADSL, bridged LLC/SNAP (ATM)</bridged-llcsnap>
+                        <ipoa-vcmux>ADSL, IPoA VC-mux (ATM)</ipoa-vcmux>
+                        <ipoa-llcsnap>ADSL, IPoA LLC/SNAP (ATM)</ipoa-llcsnap>
+                        <conservative>ADSL, not sure which (ATM, 48 bytes)</conservative>
+                    </OptionValues>
+                    <ValidationMessage>Choose a line type from the list (ex. Cable (DOCSIS)).</ValidationMessage>
+                </line>
+            </link>
+        </links>
+        <priorities>
+            <!-- devices or aliases whose packets get a DSCP mark on the internet links, so CAKE
+                 (diffserv3/4/8) sorts them into a tin of the shared pipe; see prio.py -->
+            <priority type="ArrayField">
+                <enabled type="BooleanField">
+                    <Default>1</Default>
+                    <Required>Y</Required>
+                </enabled>
+                <target type="TextField">
+                    <Required>Y</Required>
+                    <!-- a MAC address, an IPv4/IPv6 address or network, an alias name, or a protocol
+                         and port (range): tcp/22, udp/51820, tcp+udp/6881-6889 -->
+                    <Mask>/^(([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}|[0-9a-fA-F:.]{2,39}(\/[0-9]{1,3})?|[A-Za-z0-9_]{1,32}|(tcp|udp|tcp\+udp)\/[0-9]{1,5}(-[0-9]{1,5})?)$/</Mask>
+                    <ValidationMessage>Enter a MAC address (aa:bb:cc:dd:ee:ff), an IP address or network, an alias name, or a protocol and port (udp/51820, tcp+udp/6881-6889).</ValidationMessage>
+                    <Constraints>
+                        <check001>
+                            <type>UniqueConstraint</type>
+                            <ValidationMessage>This device or alias already has a priority.</ValidationMessage>
+                        </check001>
+                    </Constraints>
+                </target>
+                <class type="OptionField">
+                    <Required>Y</Required>
+                    <Default>interactive</Default>
+                    <OptionValues>
+                        <interactive>Interactive: low delay (calls, games, remote work)</interactive>
+                        <background>Background: gives way (backups, downloads, updates)</background>
+                    </OptionValues>
+                </class>
+                <description type="DescriptionField"/>
+            </priority>
+        </priorities>
+    </items>
+</model>
