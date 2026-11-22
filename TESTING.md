@@ -19,21 +19,9 @@ to (H/M/L, N, F, S, I).
 
 ## Production
 
-Running on the author's gateway since 2026-11-22: bare metal, OPNsense 26.7.9, 6-core 10th-gen
-Intel, Intel `em` WAN and `igb` LAN NICs, symmetric gigabit fibre with five WAN VLANs on one port
-sharing one pipe pair, os-cake 1.4.15 / cake-kmod 1.5.15.
-
-- In use: the status, sharing and compiled-config pages, the RRD history, and one Background
-  priority on a host alias (a group of VPN containers) with CAKE `diffserv4`. The shaper itself
-  was configured by hand; the setup page's Apply and Remove have not been used in production.
-- Installs: 1.0.f, then an upgrade to 1.0.h. Before and after each, a snapshot of the shaper
-  configuration, the loaded dummynet objects, the priority rules, tables and crontab: shaper and
-  marks unchanged, rule counters kept growing (no reload), the only addition was the 1.0.h
-  sampler-watchdog cron line. A boot-environment snapshot was taken first each time.
-- Measured: history sampler about 160 ms of CPU a sample at about 4,700 pf states, 24 MB RSS
-  (1.0.f). With the Background priority on and nothing else busy, the Bulk tin carried 544 Mbit/s
-  of upload: it takes the free line, as designed.
-- Short so far; a longer report will follow on the os-cake discussion.
+Runs on the author's own gateway (bare metal, gigabit line, os-cake) since 2026-11-22: the
+read-only pages, the history and one Background priority. Upgrades left the shaper and its
+counters untouched. The setup page's Apply and Remove are tested in the lab only.
 
 ## Automated checks
 

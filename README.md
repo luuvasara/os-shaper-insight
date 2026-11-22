@@ -289,9 +289,8 @@ to move but the settings section.
 
 ## Development and tests
 
-It runs in production on the author's own gateway (bare metal, see `TESTING.md` for what is
-used there and what was measured). Development and the tests of every write path were done on a
-throw-away OPNsense VM on a Linux host, with its own network namespaces and bridges and iperf3
+It runs in production on the author's own gateway. Development and the tests of every write path
+were done on a throw-away OPNsense VM on a Linux host, with its own network namespaces and bridges and iperf3
 endpoints for test traffic. The lab scripts are not part of
 this repository because they encode the test host's setup; `TESTING.md` describes the methods
 and results without them. `tools/shots/` takes the screenshots and runs axe-core (`npm install`
