@@ -45,6 +45,7 @@ CHECKS = [
     ('S7', 'Unused pipes and queues'),
     ('S8', 'FQ-CoDel flows and memory per instance'),
     ('S9', 'Priority marks loaded'),
+    ('S10', 'History sampler running'),
 ]
 # schedulers that do not use queue weights (kernel type names); ipfw(8): only WF2Q+ and QFQ
 # "share bandwidth according to their weights"
@@ -63,7 +64,7 @@ def _on(x):
 RELOAD_GRACE = 900          # an ipfw reload this recent explains a rule with 0 packets
 
 
-def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now=None):
+def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now=None, sampler=None):
     """ :param wans: config keys of the internet-facing interfaces (lib.detect)
     :param reloaded: time of the last ipfw rule reload (rc.ipfw stamps it), which zeroes every
         rule counter; within RELOAD_GRACE a rule with 0 packets is "wait for traffic", not a warning
@@ -322,12 +323,29 @@ def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now
     else:
         add('S9', 'info', 'Not applicable: no priority is set.')
 
+    # S10: the history sampler (Verification 4, N10: a config save could stop it silently)
+    if sampler is None:
+        add('S10', 'info', 'Not applicable: the sampler state was not read.')
+    elif sampler.get('enabled') is False:
+        add('S10', 'info', 'Switched off in the settings (Firewall: Shaper: Shaper Insight: sharing).')
+    elif sampler.get('state') == 'running':
+        wd = sampler.get('watchdog') or {}
+        extra = ' The watchdog restarted it %d time(s).' % wd['count'] if wd.get('count') else ''
+        add('S10', 'ok', 'Recording every 10 s.' + extra)
+    elif sampler.get('state') == 'restarting':
+        add('S10', 'warn', 'The sampler process ended; daemon(8) starts it again within 30 s.',
+            'While it is down, the pipe history has a gap.', 'If this stays, see the system log ("shaperinsight").')
+    else:
+        add('S10', 'warn', 'Switched on, but not running: the pipe history and the sharing page are not updated.',
+            'The watchdog (cron, every 5 minutes) starts it again; until then nothing is recorded.',
+            'Firewall: Shaper: Shaper Insight: sharing, or "configctl shaperinsight sampler.start".')
+
     # with no shaper at all, eight green "OK" lines would claim a health nobody checked (review M7)
     no_shaper = not any(_on(p) for p in pipes) and not erules
     result = []
     for cid, title in CHECKS:
         items = sorted(out.get(cid, []), key=lambda i: LEVELS.index(i['level']))
-        if no_shaper and cid != 'S9':
+        if no_shaper and cid not in ('S9', 'S10'):
             items = [{'level': 'info', 'text': 'Not applicable: no shaper is configured (no enabled pipe or rule).',
                       'why': '', 'example': ''}]
         elif not items:

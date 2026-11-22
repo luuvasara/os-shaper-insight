@@ -67,7 +67,7 @@ class HealthTest(unittest.TestCase):
         return ' '.join(i['text'] for i in self.c[cid]['items'])
 
     def test_all_nine(self):
-        self.assertEqual(sorted(self.c), ['S%d' % i for i in range(1, 10)])
+        self.assertEqual(sorted(self.c, key=lambda x: int(x[1:])), ['S%d' % i for i in range(1, 11)])
 
     def test_no_shaper_is_not_eight_ok(self):
         # review M7: a box with no shaper gets "not applicable", never a column of green OKs

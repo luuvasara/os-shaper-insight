@@ -165,12 +165,42 @@ def _items(root, path):
     return out
 
 
+def config_root(path=CONFIG, tries=5):
+    """ config.xml parsed under a shared flock, retried: core's Config::save truncates and rewrites
+    the file in place under LOCK_EX, so an unlocked read can see half a file (Verification 4, N10:
+    a save loop made every unlocked reader fail now and then).
+    :raises: the last OSError/ParseError after `tries` attempts """
+    import fcntl
+    import xml.etree.ElementTree as ET
+    last = None
+    for attempt in range(tries):
+        if attempt:
+            time.sleep(0.2)
+        try:
+            with open(path, 'rb') as f:
+                deadline = time.monotonic() + 2
+                while True:
+                    try:
+                        fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() > deadline:
+                            raise
+                        time.sleep(0.05)
+                try:
+                    return ET.fromstring(f.read())
+                finally:
+                    fcntl.flock(f, fcntl.LOCK_UN)
+        except (OSError, ET.ParseError) as exc:
+            last = exc
+    raise last
+
+
 def read_config(path=CONFIG):
     """ the shaper and os-cake sections of config.xml (read-only)
     :return: dict with pipes, queues, rules, cake (lists of flat dicts), cake_general
     """
-    import xml.etree.ElementTree as ET
-    root = ET.parse(path).getroot()
+    root = config_root(path)
     result = {
         'pipes': _items(root, './OPNsense/TrafficShaper/pipes/pipe'),
         'queues': _items(root, './OPNsense/TrafficShaper/queues/queue'),

@@ -920,6 +920,30 @@
   ],
   "plain": "like FQ-CoDel (one sub-queue per flow, served in turn), but each sub-queue is kept short by PIE instead of CoDel: PIE drops at random on arrival, more often the longer packets have been waiting."
  },
+ "hosts-grouped": {
+  "name": "All other hosts",
+  "group": "G0",
+  "plain": "The sharing chart draws the busiest hosts one by one (the setting \"hosts drawn\", 3 to 12, 6 by default) and adds up the rest in one band, so the chart stays readable. The sampler keeps the 16 busiest hosts of each pipe per sample, so its file and its cost stay bounded with thousands of connections; hosts below those 16 are only counted in the sum. Open the row to list the grouped hosts of the newest 10 s.",
+  "mixup": "A grouped host is not slowed down or treated differently: grouping is only how the page draws it.",
+  "example": "With 6 drawn and 9 hosts busy, the chart shows 6 hosts plus \"All other hosts (3)\"; opening the row lists the 3 with their rate.",
+  "source": {
+   "url": "https://man.freebsd.org/cgi/man.cgi?query=pfctl&sektion=8",
+   "quote": "Show the contents of the state table."
+  },
+  "id": "hosts-grouped"
+ },
+ "not-attributed": {
+  "name": "Not attributed",
+  "group": "G0",
+  "plain": "Bytes the pipe carried that no connection state accounts for. Typical causes: a connection that started and ended between two samples (10 s apart), traffic of the firewall itself on an interface that is not shaped, IPv6 without NAT when several links are shaped, and the per-host view being paused (very many states, or a slow pfctl).",
+  "mixup": "Not attributed is not lost or blocked traffic: the pipe did carry it, only no host could be named for it.",
+  "example": "A burst of short DNS-over-HTTPS connections that each last 2 s can add a few hundred kbit/s here.",
+  "source": {
+   "url": "https://man.freebsd.org/cgi/man.cgi?query=pfctl&sektion=8",
+   "quote": "Show the contents of the state table."
+  },
+  "id": "not-attributed"
+ },
  "_groups": [
   {
    "id": "G0",

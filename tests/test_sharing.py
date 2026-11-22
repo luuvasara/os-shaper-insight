@@ -211,7 +211,7 @@ class Sampler(unittest.TestCase):
                 for t, b in ((1010.004, 1000), (1020.006, 2000), (1030.003, 4000)):
                     f.write(json.dumps({'t': t, 'dt': 10.0, 'p': {'10001': {'hosts': [['h', b]], 'other': 0}}}) + '\n')
             with mock.patch.object(sampler, 'HOSTS', path):
-                series, first = sampler.host_series(1010, 10, 3)
+                series, first, _ = sampler.host_series(1010, 10, 3)
         # each sample measured the 10 s before it: row 1010 holds the sample at 1010.004
         self.assertEqual(series['10001'], [['h', [800, 1600, 3200]]])
         self.assertEqual(first, 1010.004)
@@ -280,6 +280,317 @@ class PortPriorities(unittest.TestCase):
         self.assertEqual(prio.mac_warning('10.0.0.5', ['10.0.0.5/32', '10.0.0.6/32']), '')
 
 
+class Verification4(unittest.TestCase):
+    """ TESTING.md, Verification 4: N9-N14 and the pkg add -f note """
+
+    def ring(self, d, recs):
+        path = os.path.join(d, 'hosts.jsonl')
+        with open(path, 'w') as f:
+            for r in recs:
+                f.write(json.dumps(r) + '\n')
+        return path
+
+    def test_n9_hosts_scaled_to_delivered(self):
+        # the lab case: hosts 31.5 + 3.79 + 27.4 = 62.7 Mbit/s offered, the pipe sent 58.4
+        mb = 1e6 / 8 * 10       # bytes in 10 s per Mbit/s
+        rec = {'t': 1010.0, 'dt': 10.0, 'p': {'10000': {'hosts': [['a', 31.5 * mb], ['b', 3.79 * mb], ['c', 27.4 * mb]],
+                                                        'other': 0, 'delivered': 58.4 * mb}}}
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(sampler, 'HOSTS', self.ring(d, [rec])):
+                series, _, offered = sampler.host_series(1010, 10, 1)
+        total = sum(h[1][0] for h in series['10000'])
+        self.assertAlmostEqual(total / 1e6, 58.4, places=1)         # never more than the pipe sent
+        self.assertAlmostEqual(offered['10000'][0] / 1e6, 62.69, places=1)
+        shares = [h[1][0] / total for h in series['10000']]
+        self.assertAlmostEqual(sum(shares), 1.0, places=3)           # not 107 %
+
+    def test_n9_no_scaling_up(self):
+        # delivered above what pf saw: the rest is "not attributed", hosts are not inflated
+        rec = {'t': 1010.0, 'dt': 10.0, 'p': {'1': {'hosts': [['a', 1000]], 'other': 0, 'delivered': 5000}}}
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(sampler, 'HOSTS', self.ring(d, [rec])):
+                series, _, _ = sampler.host_series(1010, 10, 1)
+        self.assertEqual(series['1'][0][1], [800])
+
+    def test_n9_long_interval_spread_over_rows(self):
+        # adaptive interval: one 30 s record covers three 10 s rows
+        rec = {'t': 1030.0, 'dt': 30.0, 'p': {'1': {'hosts': [['a', 3000]], 'other': 0}}}
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(sampler, 'HOSTS', self.ring(d, [rec])):
+                series, _, _ = sampler.host_series(1010, 10, 3)
+        self.assertEqual(series['1'][0][1], [800, 800, 800])
+
+    def test_n9_long_interval_follows_the_pipe(self):
+        # lab: a 20 s record (35.9 Mbit/s then nothing) must not show 17.9 + 17.9
+        rec = {'t': 1020.0, 'dt': 20.0, 'p': {'1': {'hosts': [['a', 2000]], 'other': 0, 'delivered': 2000}}}
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(sampler, 'HOSTS', self.ring(d, [rec])):
+                series, _, _ = sampler.host_series(1010, 10, 2, {'1': [1600, 0]})
+        self.assertEqual(series['1'][0][1], [1600, 0])
+
+    def test_n10_failed_read_is_not_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            half = os.path.join(d, 'config.xml')
+            with open(half, 'w') as f:
+                f.write('<opnsense><OPNsense><ShaperIns')            # a save caught half way
+            with mock.patch.object(sampler, 'CONFIG', half), mock.patch.object(sampler.time, 'sleep'):
+                self.assertIsNone(sampler.enabled())
+            with open(half, 'w') as f:
+                f.write('<opnsense><OPNsense><ShaperInsight><general><sampler>0</sampler></general>'
+                        '</ShaperInsight></OPNsense></opnsense>')
+            with mock.patch.object(sampler, 'CONFIG', half):
+                self.assertIs(sampler.enabled(), False)
+            with mock.patch.object(sampler, 'CONFIG', os.path.join(d, 'missing.xml')), \
+                    mock.patch.object(sampler.time, 'sleep'):
+                self.assertIsNone(sampler.enabled())
+
+    def test_n10_shared_reader_retries_then_raises(self):
+        import lib
+        import xml.etree.ElementTree as ET
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'config.xml')
+            with open(path, 'w') as f:
+                f.write('<opnsense><TrafficSh')
+            with mock.patch.object(lib.time, 'sleep') as sl:
+                with self.assertRaises(ET.ParseError):
+                    lib.config_root(path, tries=3)
+                self.assertEqual(sl.call_count, 2)          # retried, not given up on the first read
+            with open(path, 'w') as f:
+                f.write('<opnsense><OPNsense/></opnsense>')
+            self.assertEqual(lib.config_root(path).tag, 'opnsense')
+
+    def test_n10_read_waits_for_the_writer_lock(self):
+        import fcntl
+        import threading
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'config.xml')
+            with open(path, 'w') as f:
+                f.write('<opnsense/>')
+            w = open(path, 'r+')
+            fcntl.flock(w, fcntl.LOCK_EX)               # core's Config::save holds this while it writes
+            got = []
+            with mock.patch.object(sampler, 'CONFIG', path):
+                t = threading.Thread(target=lambda: got.append(sampler.enabled(tries=1)))
+                t.start()
+                t.join(0.3)
+                self.assertTrue(t.is_alive())           # still waiting for the lock
+                w.truncate(0)
+                w.write('<opnsense><OPNsense><ShaperInsight><general><sampler>1</sampler></general>'
+                        '</ShaperInsight></OPNsense></opnsense>')
+                w.flush()
+                fcntl.flock(w, fcntl.LOCK_UN)
+                t.join(3)
+            w.close()
+        self.assertEqual(got, [True])
+
+    def test_n10_watchdog_starts_a_stopped_sampler(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(sampler, 'enabled', return_value=True), \
+                    mock.patch.object(sampler, 'live_pid', return_value=None), \
+                    mock.patch.object(sampler, 'start', return_value={'status': 'ok', 'running': True}), \
+                    mock.patch.object(sampler, 'WATCHDOG', os.path.join(d, 'wd.json')), \
+                    mock.patch.object(sampler, 'cache_dir'), mock.patch.object(sampler, 'log') as log:
+                self.assertEqual(sampler.ensure()['action'], 'started')
+                self.assertEqual(sampler.watchdog_info()['count'], 1)
+                self.assertIn('not running', log.call_args[0][0])
+            with mock.patch.object(sampler, 'enabled', return_value=None), \
+                    mock.patch.object(sampler, 'start') as st:
+                self.assertEqual(sampler.ensure()['action'], 'none')   # unknown setting: leave it be
+                st.assert_not_called()
+
+    def test_n10_health_flags_a_stopped_sampler(self):
+        from lib.health import run_checks
+        sys.path.insert(0, HERE)
+        from test_health import SNAP
+        c = {x['id']: x for x in run_checks(SNAP, ['wan'], sampler={'enabled': True, 'state': 'stopped'})}
+        self.assertEqual(c['S10']['level'], 'warn')
+        c = {x['id']: x for x in run_checks(SNAP, ['wan'], sampler={'enabled': True, 'state': 'running'})}
+        self.assertEqual(c['S10']['level'], 'ok')
+
+    def test_n11_state_cap_and_adaptive_interval(self):
+        with mock.patch.object(sampler, 'run', return_value=(0, 'State Table\n  current entries   60000\n', '')):
+            ts, secs, text, n, why = sampler.read_states()
+        self.assertIsNone(text)
+        self.assertEqual(n, 60000)
+        self.assertIn('paused', why)
+        # the per-host read is spaced out by its cost: 470 ms -> every 4th step, capped at 6
+        self.assertEqual(max(1, min(6, int(470 // sampler.PF_BUDGET_MS) + 1)), 4)
+
+    def test_n11_states_streamed_with_small_keys(self):
+        from lib.traffic import iter_states, HostCounter
+        text = ('all tcp 192.0.2.1:1 -> 198.51.100.1:443       ESTABLISHED:ESTABLISHED\n'
+                '   [0 + 0]  [0 + 0]\n   age 00:00:05, expires in 23:59:59, 3:2 pkts, 300:200 bytes\n') * 3
+        it = iter_states(text)
+        self.assertFalse(isinstance(it, list))
+        st = next(it)
+        self.assertIsInstance(st['key'], int)
+        hc = HostCounter()
+        hc.update(iter_states(text), None if False else type('T', (), {'own': {}, 'is_local': lambda s, a: False,
+                                                                       'is_remote': lambda s, a: True, 'single': {}})(), 10)
+        self.assertEqual(hc.count, 3)
+
+    def test_n12_pipes_do_not_wait_for_pf(self):
+        calls = []
+
+        def fake(argv, timeout=10):
+            calls.append((argv[0], timeout))
+            return 0, '', ''
+        with mock.patch.object(sampler, 'run', side_effect=fake):
+            sampler.read_pipes()
+        self.assertNotIn(sampler.PFCTL, [c[0] for c in calls])
+        calls.clear()
+        with mock.patch.object(sampler, 'run', side_effect=fake):
+            sampler.read_states()
+        self.assertTrue(all(t <= sampler.PF_TIMEOUT for _, t in calls))
+
+    def test_n12_slow_pf_logged_once(self):
+        with mock.patch.object(sampler, 'log') as log:
+            q = sampler.Quiet()
+            for _ in range(59):
+                q.fail('pfctl -vss took over 5 s')
+            self.assertEqual(log.call_count, 1)
+            q.fail('pfctl -vss took over 5 s')
+            self.assertEqual(log.call_count, 2)
+            q.ok('per-host view back')
+            self.assertEqual(log.call_count, 3)
+
+    def test_n13_cap_of_its_time(self):
+        caps = [[1000, 885e6], [1100, 58.4e6]]          # the lab lowered the pipe at t=1100
+        rows = sampler.cap_rows(caps, 1050, 50, 3)       # rows at 1050, 1100, 1150
+        self.assertEqual(rows, [885e6, 58.4e6, 58.4e6])
+        self.assertEqual(sampler.above_cap([90e6, 57e6, 58e6], rows), 0)    # 90 at 910 is fine
+        self.assertEqual(sampler.above_cap([90e6, 70e6, 58e6], rows), 1)
+        self.assertEqual(sampler.cap_rows([[2000, 1e6]], 1000, 10, 2), [None, None])  # unknown: not judged
+        caps2 = {}
+        sampler.note_caps(caps2, {'1': {'payload_cap': 5}}, 10)
+        sampler.note_caps(caps2, {'1': {'payload_cap': 5}}, 20)
+        sampler.note_caps(caps2, {'1': {'payload_cap': 6}}, 30)
+        self.assertEqual(caps2['1'], [[10, 5], [30, 6]])
+
+    def test_n14_restarting_is_not_running(self):
+        with mock.patch.object(sampler, 'live_pid', return_value=123), \
+                mock.patch.object(sampler, 'child_alive', return_value=False):
+            self.assertEqual(sampler.run_state(), 'restarting')
+        with mock.patch.object(sampler, 'live_pid', return_value=None):
+            self.assertEqual(sampler.run_state(), 'stopped')
+
+    def test_n14_broken_rrd_moved_aside(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'pipe1-shaper.rrd')
+            open(path, 'w').close()
+            r = sampler.Rrd()
+
+            class P:
+                def poll(self):
+                    return None
+            r.proc = P()
+            r.proc.stdin = mock.MagicMock()
+            r.proc.stdout = mock.MagicMock()
+            r.proc.stdout.readline.return_value = 'ERROR: not an RRD file\n'
+            with mock.patch.object(r, '_readline', side_effect=lambda: 'ERROR: not an RRD file\n'), \
+                    mock.patch.object(sampler, 'log'):
+                for _ in range(3):
+                    r.cmd(['update', path, 'N:1'])
+            self.assertFalse(os.path.exists(path))
+            self.assertTrue(os.path.exists(path + '.broken'))
+
+    def test_n14_symlinked_rrd_replaced(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'pipe1-shaper.rrd')
+            os.symlink(os.path.join(d, 'elsewhere'), path)
+            r = sampler.Rrd()
+            with mock.patch.object(r, 'cmd', return_value=True) as cmd:
+                r.ensure(path)
+            self.assertFalse(os.path.islink(path))
+            self.assertEqual(cmd.call_args[0][0][0], 'create')
+
+    def test_pkg_change_stops_the_sampler(self):
+        with tempfile.TemporaryDirectory() as d:
+            v = os.path.join(d, 'shaper-insight')
+            with open(v, 'w') as f:
+                f.write('{"product_version": "1.0.g"}')
+            with mock.patch.object(sampler, 'VERSION_FILE', v):
+                before = sampler.package_id()
+                with open(v, 'w') as f:
+                    f.write('{"product_version": "1.0.d"}')     # pkg add -f of an older package
+                self.assertNotEqual(sampler.package_id(), before)
+                os.unlink(v)
+                self.assertIsNone(sampler.package_id())         # pkg delete
+        with open(os.path.join(SCRIPTS, 'sampler.py')) as f:
+            src = f.read()
+        self.assertIn("if pkg is not None and now_pkg != pkg:", src)
+
+    def test_end_supervisor_spares_a_newer_supervisor(self):
+        # the pidfile may already name the new package's supervisor: only our own parent is ended
+        with mock.patch.object(sampler, 'run', return_value=(0, '/usr/local/bin/python3 other', '')), \
+                mock.patch.object(sampler.os, 'kill') as kill:
+            sampler.end_supervisor()
+        kill.assert_not_called()
+
+
+class BulkTin(unittest.TestCase):
+    """ Bulk tin (TESTING.md): diffserv4 with Background on an alias """
+    INFO = {'cake': True, 'diffserv': 2, 'tins': ['Best Effort', 'Bulk', 'Video', 'Voice'],
+            'payload_cap': 910e6 * 1500 / 1542, 'bandwidth': 910e6}
+
+    def latest(self, be_mbit, bulk_mbit, drops=0, backlog=0):
+        def b(m):
+            return int(m * 1e6 / 8 * 10)
+        return {'step': 10, 'tins': [[b(be_mbit), 0, 0, 0], [b(bulk_mbit), drops, 0, backlog], [0, 0, 0, 0], [0, 0, 0, 0]]}
+
+    def test_yielding(self):
+        st = sampler.bulk_status(self.INFO, self.latest(800, 53, drops=40, backlog=12), {'background': 1})
+        self.assertEqual(st['state'], 'yielding')
+        self.assertIn('Background is yielding: 53.0 Mbit/s, while 800.0 Mbit/s of other traffic', st['text'])
+        self.assertIn('whole line when nothing else needs it', st['text'])
+        self.assertIn('about 55.3 Mbit/s (1/16 of the line)', st['floor_text'])
+        self.assertIn('all Background devices share this floor together', st['floor_text'])
+
+    def test_free_line(self):
+        st = sampler.bulk_status(self.INFO, self.latest(2, 854), {'background': 1})
+        self.assertEqual(st['state'], 'free')
+        self.assertIn('Background is using the free line: 854.0 Mbit/s', st['text'])
+
+    def test_free_only_when_other_classes_carry_nothing(self):
+        # 3 % of the line in Best Effort next to a busy Bulk was "free" before (other < Bulk/10): not nothing
+        st = sampler.bulk_status(self.INFO, self.latest(27, 780), {'background': 1})
+        self.assertEqual(st['state'], 'sharing')
+        # 2 % of the line or less is nothing: the free line
+        self.assertEqual(sampler.bulk_status(self.INFO, self.latest(15, 860), {'background': 1})['state'], 'free')
+
+    def test_yielding_near_threshold_without_drop_counters(self):
+        # other classes fill the line, Bulk sits near its 1/16 threshold; no drops or backlog in this step
+        st = sampler.bulk_status(self.INFO, self.latest(820, 60), {'background': 1})
+        self.assertEqual(st['state'], 'yielding')
+        self.assertIn('Background is yielding: 60.0 Mbit/s, while 820.0 Mbit/s', st['text'])
+
+    def test_low_bulk_on_a_quiet_line_is_not_yielding(self):
+        # Bulk near the threshold only because it wants little, the line half empty: not yielding
+        self.assertEqual(sampler.bulk_status(self.INFO, self.latest(300, 50), {'background': 1})['state'], 'sharing')
+
+    def test_idle_and_besteffort(self):
+        self.assertEqual(sampler.bulk_status(self.INFO, self.latest(300, 0), {'background': 1})['state'], 'idle')
+        be = dict(self.INFO, diffserv=0, tins=['Best Effort'])
+        st = sampler.bulk_status(be, {}, {'background': 1})
+        self.assertEqual(st['state'], 'besteffort')
+        self.assertIn('Priorities have no effect on this pipe: CAKE is set to besteffort', st['text'])
+        self.assertIsNone(sampler.bulk_status(be, {}, {}))
+
+    def test_tin_order_matches_this_dn_cake(self):
+        from lib import parse_cake_stats  # noqa: F401
+        import lib
+        src = open(lib.__file__).read()
+        self.assertIn("1: ['Best Effort', 'Bulk', 'Voice']", src)
+        self.assertIn("2: ['Best Effort', 'Bulk', 'Video', 'Voice']", src)
+
+    def test_latest_tins_carry_drops_and_marks_apart(self):
+        before = {'1': {'bytes': 0, 'tinx': [[0, 0, 0, 0], [0, 0, 0, 0]]}}
+        now = {'1': {'bytes': 900, 'tinx': [[800, 1, 2, 3], [100, 4, 5, 6]]}}
+        d = sampler.pipe_deltas(now, before)['1']
+        self.assertEqual(d['delivered'], 900)
+        self.assertEqual(d['tins'], [[800, 1, 2, 3], [100, 4, 5, 6]])
+
+
 class SchedulerTerms(unittest.TestCase):
     """ user feedback 2026-11-22: "WF2Q+ has no tooltip, nor why?" """
 
@@ -307,6 +618,12 @@ class SchedulerTerms(unittest.TestCase):
             self.assertIn("'%s', '%s'" % (w, tid), self.common)
             self.assertIn("'%s': '%s'" % (w, tid), self.check)
 
+    def test_no_link_ends_in_punctuation(self):
+        # "https://en.wikipedia.org/wiki/Leaky_bucket:" was a dead link (publication check, 2026-11-22)
+        bad = [u for v in self.glossary.values() if isinstance(v, dict) for u in v.get('urls', [])
+               if u[-1] in ':,.;']
+        self.assertEqual(bad, [])
+
     def test_sched_words_chip(self):
         self.assertEqual(self.a.sched_words('WF2Q+'), '{{term:wf2q|WF2Q+}}')
         self.assertEqual(self.a.sched_words('something new'), 'something new')
@@ -333,7 +650,7 @@ class SchedulerTerms(unittest.TestCase):
                            'queues': [{'uuid': 'q', 'pipe': 'p', 'enabled': '1', 'number': '1', 'weight': '100'}],
                            'rules': [], 'cake': [], 'cake_general': {}, 'interfaces': {}},
                 'kernel': {'dnctl': {'pipes': {10002: {'bandwidth': 10000000, 'type': 'WF2Q+', 'params': '',
-                                                      'children': [], 'buckets': 0, 'active': 0, 'mask': False}},
+                                                       'children': [], 'buckets': 0, 'active': 0, 'mask': False}},
                                      'queues': {}},
                            'ipfw': {'rules': {}, 'other': []}, 'sysctl': {},
                            'kld': {'modules': ['dummynet.ko'], 'dummynet': True, 'dn_cake': False,

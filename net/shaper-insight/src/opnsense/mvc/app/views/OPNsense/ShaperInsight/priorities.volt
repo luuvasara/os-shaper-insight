@@ -24,6 +24,7 @@
  # POSSIBILITY OF SUCH DAMAGE.
  #}
 <link rel="stylesheet" href="{{ cache_safe('/ui/css/shaperinsight/shaperinsight.css') }}">
+<script src="{{ cache_safe('/ui/js/shaperinsight/ipcompare.js') }}"></script>
 <script src="{{ cache_safe('/ui/js/shaperinsight/common.js') }}"></script>
 <script>
 'use strict';
@@ -40,46 +41,54 @@ $(document).ready(function () {
     $("#reconfigureAct").SimpleActionButton({onAction: function () { loadStatus(); } });
 
     let chosen = {};
-    function pickRow(target, label, sub) {
+    let aliasInfo = {};
+    let hostInfo = {};
+    function addAs(target, label) {
         const has = chosen[target.toLowerCase()];
-        return '<tr><td><b>' + esc(label) + '</b><br><span class="sa-note">' + esc(sub) + '</span></td><td>' +
-            (has ? '<span class="sa-pick-has">' + esc(has === 'interactive' ? 'Interactive' : 'Background') + '</span>' :
+        return has ? '<span class="sa-pick-has">' + esc(has === 'interactive' ? 'Interactive' : 'Background') + '</span>' :
             ['interactive', 'background'].map(function (c) {
                 return '<button type="button" class="btn btn-default btn-xs sa-pick" data-target="' + esc(target) +
-                    '" data-class="' + c + '" data-descr="' + esc(label) + '">' +
-                    (c === 'interactive' ? 'Interactive' : 'Background') + '</button>';
-            }).join(' ')) + '</td></tr>';
+                    '" data-class="' + c + '" data-descr="' + esc(label) + '">' + (c === 'interactive' ? 'Interactive' : 'Background') + '</button>';
+            }).join(' ');
     }
+    const DEV_COLS = [{title: 'Name', field: 'name'}, {title: 'IP', field: 'ip', type: 'ip'}, {title: 'MAC', field: 'mac'},
+        {title: 'Manufacturer', field: 'vendor'}, {title: 'Known from', field: 'source'}, {title: 'Add as', field: 'add', type: 'html', sort: false}];
+    const ALIAS_COLS = [{title: 'Alias', field: 'alias', type: 'html'}, {title: 'Type', field: 'type'},
+        {title: 'Content', field: 'content'}, {title: 'Add as', field: 'add', type: 'html', sort: false}];
     function loadDevices() {
         ajaxGet('/api/shaperinsight/priorities/search_item/', {rowCount: -1}, function (rows) {
             if (!rows || !Array.isArray(rows.rows)) {
-                $('#sa-devices tbody').html('<tr><td colspan="2">' + SA.badge('bad', 'Not available') +
-                    ' The saved priorities could not be read, so the list cannot show which devices have one.</td></tr>');
+                SA.table('#sa-devices', DEV_COLS, [], {empty: 'Not available: the saved priorities could not be read, so the list cannot show which devices have one.'});
                 return;
             }
             chosen = {};
             (rows.rows || []).forEach(function (r) {
                 chosen[String(r.target).toLowerCase()] = r['class'];
             });
-            SA.get('/api/shaperinsight/devices/list').then(function (d) {
+            Promise.all([SA.get('/api/shaperinsight/devices/list'),
+                SA.get('/api/shaperinsight/sampler/hosts').catch(function () { return {}; })]).then(function (res) {
+                const d = res[0];
+                hostInfo = (res[1] && res[1].hosts) || {};
                 if (!d || !d.devices) { throw new Error('no data'); }
-                const dev = (d.devices || []).map(function (x) {
+                aliasInfo = {};
+                (d.aliases || []).forEach(function (a) { aliasInfo[a.name] = a; });
+                SA.table('#sa-devices', DEV_COLS, (d.devices || []).map(function (x) {
                     /* a MAC follows the device to a new address; without one, the address */
                     const target = x.mac || x.address;
-                    return pickRow(target, x.hostname || x.address, x.address + (x.mac ? ' · ' + x.mac : '') + ' · ' +
-                        x.sources.join(', ') + (x.static ? '' : (x.mac ? ' (address may change; picked by MAC)' :
-                            ' (no MAC known: picked by this address, which may change)')));
-                });
-                $('#sa-devices tbody').html(dev.join('') ||
-                    '<tr><td colspan="2">No DHCP leases or reservations found (Kea or Dnsmasq). Use + above to enter a MAC or IP address.</td></tr>');
-                const al = (d.aliases || []).map(function (x) {
-                    return pickRow(x.name, x.name, (x.description ? x.description + ' · ' : '') + x.type + ': ' + x.content);
-                });
-                $('#sa-aliases tbody').html(al.join('') || '<tr><td colspan="2">No host or network aliases.</td></tr>');
+                    const info = hostInfo[x.address] || {};
+                    return {name: x.hostname || '', ip: x.address, mac: x.mac || info.mac || '', vendor: info.vendor || '',
+                        source: x.sources.join(', ') + (x.static ? '' : (x.mac ? ' (address may change; picked by MAC)' :
+                            ' (no MAC known: picked by this address, which may change)')),
+                        add: addAs(target, x.hostname || x.address)};
+                }), {sort: ['ip', 'asc'], label: 'Devices', empty: 'No DHCP leases or reservations found (Kea or Dnsmasq). Use + above to enter a MAC or IP address.'});
+                SA.table('#sa-aliases', ALIAS_COLS, (d.aliases || []).map(function (x) {
+                    return {alias: SA.ref('alias', x.name, x) + (x.description ? '<br><span class="sa-note">' + esc(x.description) + '</span>' : ''),
+                        type: x.type, content: x.content, add: addAs(x.name, x.name)};
+                }), {sort: ['alias', 'asc'], label: 'Aliases', empty: 'No host or network aliases.'});
+                loadStatus();
             }).catch(function (e) {
                 // an API error is an error, not "no devices" (core's ajaxGet hands {} to the callback)
-                $('#sa-devices tbody').html('<tr><td colspan="2">' + SA.badge('bad', 'Not available') +
-                    ' The device list could not be read (' + esc(e.message) + '). Use + above to enter a MAC or IP address.</td></tr>');
+                SA.table('#sa-devices', DEV_COLS, [], {empty: 'Not available: the device list could not be read (' + e.message + '). Use + above to enter a MAC or IP address.'});
             });
         });
     }
@@ -117,29 +126,32 @@ $(document).ready(function () {
                 html += '<p>Marked on: <b>' + d.links.map(esc).join(', ') + '</b>. The marks only choose a class inside the ' +
                     'same shared pipe: no extra pipe, nothing reserved.</p>';
             }
-            html += '<table class="table table-condensed sa-stack" id="sa-prio-classes"><thead><tr><th scope="col">Priority</th><th scope="col">What it does</th>' +
-                '<th scope="col">Devices now</th><th scope="col">Marked so far</th></tr></thead><tbody>';
-            (d.classes || []).forEach(function (c) {
+            /* the table node stays across refreshes, so SA.table keeps the sort */
+            $('#sa-prio-head').html(html);
+            SA.table('#sa-prio-classes', [
+                {title: 'Priority', field: 'cls', type: 'html'}, {title: 'What it does', field: 'what'},
+                {title: 'Devices now', field: 'members', type: 'html'},
+                {title: 'Marked so far', field: 'bytes', type: 'num', fmt: function (v) { return v === null ? 'not loaded' : (v / 1e6).toFixed(1) + ' MB'; }}
+            ], (d.classes || []).map(function (c) {
                 const mine = (d.rules || []).filter(function (r) { return r.rule.indexOf('setdscp ' + c.dscp + ' ') === 0; });
                 const bytes = mine.reduce(function (a, r) { return a + r.bytes; }, 0);
-                html += '<tr><td><b>' + esc(c['class'] === 'interactive' ? 'Interactive' : 'Background') + '</b><br>' +
-                    '<span class="sa-note">CAKE ' + esc(c.tin) + ' class, DSCP ' + esc(c.dscp.toUpperCase()) + '</span></td>' +
-                    '<td>' + esc(c.what) + '</td><td>' + (c.members.length ? c.members.map(function (m) {
+                return {cls: '<b>' + esc(c['class'] === 'interactive' ? 'Interactive' : 'Background') + '</b><br>' +
+                        '<span class="sa-note">CAKE ' + esc(c.tin) + ' class, DSCP ' + esc(c.dscp.toUpperCase()) + '</span>',
+                    what: c.what, bytes: mine.length ? bytes : null,
+                    members: c.members.length ? c.members.map(function (m) {
+                        const name = aliasInfo[m.target] ? SA.ref('alias', m.target, aliasInfo[m.target]) : esc(m.target);
                         if (m.port) {
-                            return esc(m.target) + ': every device, this port on either end';
+                            return name + ': every device, this port on either end';
                         }
-                        return esc(m.target) + ': ' + (m.addresses.length ? m.addresses.map(esc).join(', ') :
-                            '<i class="fa fa-exclamation-triangle" aria-hidden="true"></i> no address found yet (device offline?)') +
+                        return name + ': ' + (m.addresses.length ? m.addresses.map(esc).join(', ') :
+                            '<i class="fa fa-exclamation-triangle" aria-hidden="true"></i> ' +
+                            (aliasInfo[m.target] ? 'this alias resolves to no address: nothing is marked' : 'no address found yet (device offline?)')) +
                             (m.warning ? '<br>' + SA.badge('warn', 'Shared MAC') + ' <span class="sa-note">' + esc(m.warning) + '</span>' : '');
-                    }).join('<br>') : '<span class="sa-note">none</span>') + '</td>' +
-                    '<td>' + (mine.length ? (bytes / 1e6).toFixed(1) + ' MB' : '<span class="sa-note">not loaded</span>') + '</td></tr>';
-            });
-            html += '</tbody></table><p class="sa-note">Addresses are looked up again every minute (DHCP leases, ARP, IPv6 neighbours).</p>';
-            $('#sa-prio-status').html(html);
-            SA.labelCells('#sa-prio-classes');
+                    }).join('<br>') : '<span class="sa-note">none</span>'};
+            }), {sort: ['cls', 'asc'], label: 'Priorities now loaded', empty: 'No priority is set.'});
             document.body.setAttribute('data-sa-ready', '1');
         }).catch(function (e) {
-            $('#sa-prio-status').html('<div class="alert alert-danger" role="alert">' + SA.badge('bad', 'Not available') +
+            $('#sa-prio-head').html('<div class="alert alert-danger" role="alert">' + SA.badge('bad', 'Not available') +
                 ' The status could not be read (' + esc(e.message) + '), so nothing is known about the marks right now.</div>');
             document.body.setAttribute('data-sa-ready', '1');
         });
@@ -178,15 +190,16 @@ $(document).ready(function () {
     <p class="sa-note" id="sa-apply-hint" style="display:none" role="status">Added. Press Apply below to load the marks.</p>
     <p class="text-danger" id="sa-pick-error" style="display:none" role="alert"></p>
     <details open><summary>Devices (DHCP leases and reservations)</summary>
-    <table class="table table-condensed" id="sa-devices"><thead><tr><th scope="col">Device</th><th scope="col">Add as</th></tr></thead><tbody></tbody></table>
+    <div id="sa-devices"></div>
     </details>
     <details><summary>Aliases (host and network)</summary>
-    <table class="table table-condensed" id="sa-aliases"><thead><tr><th scope="col">Alias</th><th scope="col">Add as</th></tr></thead><tbody></tbody></table>
+    <div id="sa-aliases"></div>
     </details>
 </div>
 <div class="content-box sa-intro">
     <h2 class="sa-h">Now loaded</h2>
-    <div id="sa-prio-status" aria-live="polite"></div>
+    <div id="sa-prio-status"><div id="sa-prio-head" aria-live="polite"></div><div id="sa-prio-classes"></div>
+        <p class="sa-note">Addresses are looked up again every minute (DHCP leases, ARP, IPv6 neighbours).</p></div>
 </div>
 </section>
 {{ partial('layout_partials/base_apply_button', {'data_endpoint': '/api/shaperinsight/priorities/apply'}) }}

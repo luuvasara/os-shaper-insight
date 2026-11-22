@@ -53,6 +53,32 @@ class SamplerController extends ApiControllerBase
     }
 
     /**
+     * per address: MAC, manufacturer (core's IEEE list) and the other addresses on that MAC, for the
+     * host tables; per-host data, so the same privilege as the history
+     */
+    public function hostsAction()
+    {
+        return $this->call('hosts');
+    }
+
+    /**
+     * one pipe's hosts in the newest step: searched, sorted and paged server side (the table's group
+     * rows, fetched only while open or searched; host simulation in TESTING.md)
+     * @param string $pipe pipe number
+     */
+    public function newestAction($pipe = '')
+    {
+        $pipe = ctype_digit((string)$pipe) ? (string)$pipe : '';
+        $q = (string)$this->request->get('q', null, '');
+        $q = preg_match('/^[0-9A-Fa-f:.]{0,64}$/', $q) ? $q : '';
+        $sort = $this->request->get('sort', null, 'rate') === 'ip' ? 'ip' : 'rate';
+        $offset = (string)$this->request->get('offset', null, '0');
+        $limit = (string)$this->request->get('limit', null, '50');
+        return $this->call('newest', [$pipe, $q === '' ? '-' : $q, $sort,
+            ctype_digit($offset) ? $offset : '0', ctype_digit($limit) ? $limit : '50']);
+    }
+
+    /**
      * @param string $seconds window, 60 s to one year
      */
     public function historyAction($seconds = '3600')

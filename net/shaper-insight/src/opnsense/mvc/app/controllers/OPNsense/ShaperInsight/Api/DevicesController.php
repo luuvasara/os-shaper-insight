@@ -134,7 +134,9 @@ class DevicesController extends ApiControllerBase
         if (isset($cfg->OPNsense->Firewall->Alias->aliases->alias)) {
             foreach ($cfg->OPNsense->Firewall->Alias->aliases->alias as $alias) {
                 if ((string)$alias->enabled === '1' && in_array((string)$alias->type, ['host', 'network'])) {
+                    /* uuid: the alias links open it in Firewall: Aliases, as core's rules grid does */
                     $aliases[] = ['name' => (string)$alias->name, 'type' => (string)$alias->type,
+                        'uuid' => (string)$alias->attributes()['uuid'],
                         'description' => (string)$alias->description,
                         'content' => str_replace("\n", ', ', (string)$alias->content)];
                 }

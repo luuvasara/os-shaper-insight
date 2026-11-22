@@ -24,10 +24,10 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 # os-shaper-insight: after an install or reinstall (also "make upgrade", which is pkg delete +
-# pkg add) the setup in config.xml is still there. Only when a priority is enabled: load its
-# marks again (rc.conf.d/ipfw is back, an ipfw reload runs core's rules and then ours) and build
-# cron now, not at the next reboot. Without one, install changes nothing in the kernel: no
-# reload (it would zero every rule counter), no ipfw tables, no ipfw set touched (review N5).
+# pkg add) the setup in config.xml is still there. Only when a priority is enabled and its marks
+# are not loaded: load them again (rc.conf.d/ipfw is back, an ipfw reload runs core's rules and then
+# ours). Cron is rebuilt now, not at the next reboot. Otherwise install changes nothing in the
+# kernel: no reload (it would zero every rule counter), no ipfw tables, no ipfw set touched (N5).
 # one-time move from the plugin's earlier name (os-shaper-assistant): its state, restore points
 # and ledger in /conf and the bufferbloat results, only where the new name has nothing yet; then
 # its settings section (migrate.php, which also does nothing once the old section is gone)
@@ -52,10 +52,15 @@ fi
 chmod 0644 /usr/local/etc/rc.conf.d/ipfw
 # the "removing" flag of the uninstall half of a "make upgrade" (review S4) goes first
 rm -f /var/run/shaperinsight-prio.removing
-if /usr/local/opnsense/scripts/shaperinsight/prio.py enabled >/dev/null 2>&1; then
+# An upgrade in place (pkg add of a newer package) keeps the marks loaded: then no reload, so rule
+# counters and the running ruleset stay as they are; a reinstall after pkg delete has them
+# unloaded and reloads (an upgrade with priorities active, 1.0.f -> 1.0.g)
+if /usr/local/opnsense/scripts/shaperinsight/prio.py enabled >/dev/null 2>&1 &&
+    ! /sbin/ipfw -S list 2>/dev/null | grep -q '^[0-9]* set 7 '; then
 	/usr/local/sbin/configctl ipfw reload >/dev/null 2>&1
-	/usr/local/sbin/configctl cron restart >/dev/null 2>&1
 fi
+# cron: the priority refresh (when a priority is set) and the sampler's watchdog
+/usr/local/sbin/configctl cron restart >/dev/null 2>&1
 # the history sampler: reads counters every 10 s (no writes to the shaper); off in the settings
 /usr/local/opnsense/scripts/shaperinsight/sampler.py restart >/dev/null 2>&1 || true
 cat <<'MSG'
@@ -67,9 +72,13 @@ Shaper Insight installed: Firewall: Shaper: Shaper Insight: status (and setup, p
   configuration revisions: the plugin's settings section and its entry in the plugin list.
 - Priorities load ipfw rules (set 7) that mark traffic for CAKE; only then are rules and
   ipfw tables added, and never in a set another package uses.
-- A history sampler reads the shaper and pf counters every 10 s (measured: 150 ms of CPU
-  per sample with 6000 connection states, 1.5 % of one core) into RRD files in /var/db/rrd; Firewall: Shaper: Shaper Insight: sharing
-  shows them, and the sharing page switches it off.
+- A history sampler reads the shaper counters every 10 s into RRD files in /var/db/rrd and the
+  pf states for the per-host view. Measured on a 4-core lab VM: idle about 15 ms of CPU a sample
+  and 18 MB of memory; with 22 000 states about 230 ms and 46 MB, per-host read every 30 s
+  instead of 10 s; above 50 000 states the per-host view pauses (pipes and classes go on) and
+  the memory is given back once the states drop. Firewall: Shaper: Shaper Insight: sharing shows
+  the history and the current cost, and switches the sampler off. A cron job every 5 minutes
+  restarts it if it stopped while switched on.
 - The bufferbloat test downloads and uploads to third-party servers you can change.
 - To take Shaper Insight's shaping away, press Remove (setup page, "Undo") before
   uninstalling. Uninstalling alone leaves your shaper as it is (priorities turn off); a

@@ -25,6 +25,7 @@
  #}
 <link rel="stylesheet" href="{{ cache_safe('/ui/css/shaperinsight/shaperinsight.css') }}">
 <script src="{{ cache_safe('/ui/js/chart.umd.min.js') }}"></script>
+<script src="{{ cache_safe('/ui/js/shaperinsight/ipcompare.js') }}"></script>
 <script src="{{ cache_safe('/ui/js/shaperinsight/common.js') }}"></script>
 <script>
 'use strict';
@@ -166,6 +167,7 @@ $(document).ready(function () {
         const sum = r.summary || {};
         const lab = /^lab\b/i.test((r.settings || {}).label || '');
         let h = '';
+        let phaseRows = null;
         if (r.state === 'done') {
             h += '<div class="sa-summary" role="status"><span class="sa-g sa-grade ' + gradeClass(r.grade) + '">' + esc(r.grade) +
                 '</span><p><b>Added delay under load: ' + ms(r.added_worst) + '</b> (the worse of download and upload, median over the targets). ' +
@@ -176,28 +178,37 @@ $(document).ready(function () {
             h += '<p class="sa-note">Method: this firewall\'s own test (ICMP echo 5 times a second; load by ' + esc(String((r.settings || {}).streams)) +
                 ' curl streams per direction). ' + (r.settings && r.settings.label ? 'Label: ' + esc(r.settings.label) + '. ' : '') +
                 'Finished ' + esc(new Date(r.finished * 1000).toLocaleString()) + '.</p>';
-            h += '<table class="table table-condensed sa-stack" id="sa-bb-phases"><thead><tr><th scope="col">Phase</th><th scope="col">Added delay (median)</th>' +
-                '<th scope="col">Added, 95th / 99th percentile</th><th scope="col">Loss</th><th scope="col">Download</th><th scope="col">Upload</th>' +
-                '<th scope="col">Round trips per minute</th></tr></thead><tbody>';
-            ['idle', 'download', 'upload', 'both'].forEach(function (p) {
+            h += '<div id="sa-bb-phases"></div>';
+            phaseRows = [];
+            ['idle', 'download', 'upload', 'both'].forEach(function (p, k) {
                 const v = sum[p];
                 if (!v) { return; }
                 const refl = Object.keys(v.targets).filter(function (t) { return t !== r.gateway; }).map(function (t) { return v.targets[t]; });
-                const med = function (k) {
-                    const a = refl.map(function (x) { return x[k]; }).filter(function (x) { return x !== null; }).sort(function (a, b) { return a - b; });
+                const med = function (key) {
+                    const a = refl.map(function (x) { return x[key]; }).filter(function (x) { return x !== null; }).sort(function (a, b) { return a - b; });
                     return a.length ? a[Math.floor(a.length / 2)] : null;
                 };
-                h += '<tr><th scope="row">' + PHASE_WORD[p] + '</th><td>' + (p === 'idle' ? 'baseline ' + ms(med('p50')) : ms(v.added_p50)) +
-                    '</td><td>' + (p === 'idle' ? '–' : ms(med('added_p95')) + ' / ' + ms(med('added_p99'))) + '</td><td>' +
-                    (med('loss_pct') === null ? '–' : med('loss_pct') + ' %') + '</td><td>' + mbit(v.down_mbit) + '</td><td>' + mbit(v.up_mbit) +
-                    '</td><td>' + (v.rpm ? v.rpm.toLocaleString() : '–') + '</td></tr>';
+                phaseRows.push({idx: k, phase: PHASE_WORD[p], added: p === 'idle' ? med('p50') : v.added_p50, idle: p === 'idle',
+                    p95: p === 'idle' ? null : med('added_p95'), p99: med('added_p99'), loss: med('loss_pct'),
+                    down: v.down_mbit, up: v.up_mbit, rpm: v.rpm || null});
             });
-            h += '</tbody></table><p class="sa-note">Round trips per minute = 60 000 / loaded round trip; derived from this probe, not Apple\'s networkQuality test.</p>';
+            h += '<p class="sa-note">Round trips per minute = 60 000 / loaded round trip; derived from this probe, not Apple\'s networkQuality test.</p>';
         } else if (r.state === 'failed' || r.state === 'cancelled') {
             h += '<div class="alert alert-warning" role="status">The test ' + (r.state === 'cancelled' ? 'was cancelled' : 'failed: ' + esc(r.error || '')) + '.</div>';
         }
         $('#sa-bb-result').html(h);
-        SA.labelCells('#sa-bb-phases');
+        if (phaseRows) {
+            const num = function (f) { return function (v) { return v === null || v === undefined ? '–' : f(v); }; };
+            SA.table('#sa-bb-phases', [
+                {title: 'Phase', field: 'phase', sortField: 'idx'},
+                {title: 'Added delay (median)', field: 'added', type: 'num', fmt: function (v, row) { return (row.idle ? 'baseline ' : '') + ms(v); }},
+                {title: 'Added, 95th / 99th percentile', field: 'p95', type: 'num', fmt: function (v, row) { return row.idle ? '–' : ms(v) + ' / ' + ms(row.p99); }},
+                {title: 'Loss', field: 'loss', type: 'num', fmt: num(function (v) { return v + ' %'; })},
+                {title: 'Download', field: 'down', type: 'num', fmt: function (v) { return mbit(v); }},
+                {title: 'Upload', field: 'up', type: 'num', fmt: function (v) { return mbit(v); }},
+                {title: 'Round trips per minute', field: 'rpm', type: 'num', fmt: num(function (v) { return v.toLocaleString(); })}
+            ], phaseRows, {sort: ['phase', 'asc'], label: 'Phases of this test', empty: 'No phase finished.'});
+        }
         if (r.samples) { draw(r); }
     }
     function progress(r) {
@@ -225,23 +236,25 @@ $(document).ready(function () {
             }
         });
     }
+    const HIST_COLS = [
+        {title: 'Finished', field: 'finished', type: 'num', fmt: function (v) { return new Date(v * 1000).toLocaleString(); }},
+        {title: 'Grade', field: 'grade', type: 'num', fmt: function (v, row) { return '<span class="sa-g ' + gradeClass(row.gradeTxt) + '">' + esc(row.gradeTxt) + '</span> ' + ms(v); }, html: true},
+        {title: 'Shaped link', field: 'shaped'}, {title: 'Label', field: 'label'},
+        {title: 'Show', field: 'show', type: 'html', sort: false}];
     function loadHistory(showFirst) {
         ajaxGet('/api/shaperinsight/bufferbloat/results', {}, function (d) {
             d = SA.unescapeApi(d);
             if (!d || !Array.isArray(d.results)) {
                 // core's ajaxGet hands {} to the callback on any error: say so, not "no results"
-                $('#sa-bb-history tbody').html('<tr><td colspan="5">' + SA.badge('bad', 'Not available') +
-                    ' The saved results could not be read.</td></tr>');
+                SA.table('#sa-bb-history', HIST_COLS, [], {empty: 'Not available: the saved results could not be read.'});
                 return;
             }
             const res = d.results;
-            $('#sa-bb-history tbody').html(res.map(function (r, i) {
-                return '<tr><td>' + esc(new Date(r.finished * 1000).toLocaleString()) + '</td><td><span class="sa-g ' + gradeClass(r.grade) + '">' +
-                    esc(r.grade) + '</span> ' + ms(r.added_worst) + '</td><td>' + (r.shaped ? 'yes' : 'no') + ' (' + esc(r.interface) + ')</td><td>' +
-                    esc((r.settings || {}).label || '') + '</td><td><button type="button" class="btn btn-default btn-xs sa-bb-show" data-i="' + i +
-                    '">Show</button></td></tr>';
-            }).join('') || '<tr><td colspan="5">No results yet.</td></tr>');
-            SA.labelCells('#sa-bb-history');
+            SA.table('#sa-bb-history', HIST_COLS, res.map(function (r, i) {
+                return {finished: r.finished, grade: r.added_worst, gradeTxt: r.grade, shaped: (r.shaped ? 'yes' : 'no') + ' (' + r.interface + ')',
+                    label: (r.settings || {}).label || '',
+                    show: '<button type="button" class="btn btn-default btn-xs sa-bb-show" data-i="' + i + '">Show</button>'};
+            }), {sort: ['finished', 'desc'], label: 'Saved results', empty: 'No results yet.'});
             $('#sa-bb-history').data('results', res);
             /* data estimate for the confirm dialog, from the last result's rates */
             const last = res[0];
@@ -257,7 +270,7 @@ $(document).ready(function () {
         });
     }
     $(document).on('click', '.sa-bb-show', function () {
-        render($('#sa-bb-history').data('results')[$(this).data('i')]);
+        render($('#sa-bb-history').data('results')[$(this).attr('data-i')]);
         document.getElementById('sa-bb-result').scrollIntoView();
     });
     $('#sa-bb-save').click(function () {
@@ -317,8 +330,7 @@ $(document).ready(function () {
 </div>
 <div class="content-box sa-intro">
     <h2 class="sa-h">History</h2>
-    <table class="table table-condensed sa-stack" id="sa-bb-history"><thead><tr><th scope="col">Finished</th><th scope="col">Grade</th>
-        <th scope="col">Shaped link</th><th scope="col">Label</th><th scope="col"><span class="sr-only">Show</span></th></tr></thead><tbody></tbody></table>
+    <div id="sa-bb-history"></div>
 </div>
 <div class="content-box">
     <details><summary class="sa-intro">Settings</summary>

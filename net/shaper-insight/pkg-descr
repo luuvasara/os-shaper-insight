@@ -31,6 +31,38 @@ os-cake is optional: it is detected at runtime.
 Plugin Changelog
 ================
 
+1.0.h
+
+* "Limiting now" needs the pipe near its cap in 2 of the last 3
+  steps, or drops at half the cap or more; a stray drop is not
+  limiting
+* "Background is using the free line" only when the other classes
+  carry next to nothing (2 % of the line); near its 1/16 floor
+  while the others fill the line it says "yielding"
+* CAKE tins drawn with fixed textures, so host colours mean hosts
+  only; sort arrows no longer cover right-aligned headers
+
+1.0.g
+
+* Sharing: per-host rates scaled to what the pipe sent (pf counts
+  packets before the shaper drops them), with the offered rate shown
+* Sampler survives config saves (locked, retried reads), has a
+  watchdog (cron, 5 min) and a health check, caps the pf state read
+  (paused above 50,000 states, slower when costly) and gives memory
+  back after a state flood
+* Pipe history no longer waits for pf; readings judged by the cap of
+  their time; "Background is yielding" and the 1/16 floor per pipe
+* A package change or removal stops a running sampler
+* Upgrading in place keeps loaded priority marks and their counters
+* Every table sorts (click or keyboard; addresses by value), shows
+  an empty state and fits a phone; host tables show Name, IP, MAC
+  and Manufacturer (core's IEEE list), shared and random MACs
+* Sharing: at most 8 coloured hosts with stable colours, the rest
+  one band; legend above the chart; "Find a host"; the other hosts
+  listed on demand from the newest step, windowed beyond 100 rows
+* Alias, pipe, queue and interface names link to their core page
+  with the content on hover
+
 1.0.f
 
 * Sharing page: per-device rates under each pipe's payload cap, CAKE

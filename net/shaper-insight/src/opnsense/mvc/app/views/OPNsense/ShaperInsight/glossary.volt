@@ -24,6 +24,7 @@
  # POSSIBILITY OF SUCH DAMAGE.
  #}
 <link rel="stylesheet" href="{{ cache_safe('/ui/css/shaperinsight/shaperinsight.css') }}">
+<script src="{{ cache_safe('/ui/js/shaperinsight/ipcompare.js') }}"></script>
 <script src="{{ cache_safe('/ui/js/shaperinsight/common.js') }}"></script>
 <script>
 'use strict';

@@ -14,12 +14,73 @@ the shaper does.
 Earlier name: os-shaper-assistant (used only for early test installs until 2026-11-22). See
 "Switching from os-shaper-assistant" below.
 
+## Screenshots
+
+All taken on the lab VM (version 1.0.h; the addresses are lab and documentation addresses), at
+1920x1080 unless noted; tall pages are cropped to their top part.
+
+**Sharing: who uses each pipe.** Each host's rate stacked under the pipe's real payload cap,
+the "Limiting now" verdict, drops and ECN marks, and the per-class (CAKE tin) view with the
+Background floor. This is the question a single speed test cannot answer: how the line is
+shared while several devices want it.
+
+![Sharing page: per-host rates stacked under the 38.9 Mbit/s cap of a 40 Mbit/s pipe, a host table with name, IP, MAC and manufacturer, drops and marks, and the per-class chart and table](docs/screenshots/sharing-light.png)
+
+**Sharing with 1,000 hosts.** The chart colours at most 8 hosts and groups the rest; the full
+list comes from the server, windowed, with a search box. It shows the page stays usable on a
+large network (documentation addresses, fake names).
+
+![Sharing page with 1,000 simulated hosts: stacked chart, "1000 hosts in the newest step" and a long sortable host table](docs/screenshots/sharing-1000-hosts-light.png)
+
+**Status: health checks.** Ten checks for shaper mistakes the core pages do not warn about,
+each with why it matters and how to fix it; here a queue weight CAKE ignores, a disabled pipe
+still loaded, and two internet links shaped differently.
+
+![Status page health checks S1 to S10 with findings, each with a Why and a Fix line](docs/screenshots/status-health-checks-light.png)
+
+**Setup: which links are internet links.** Detection with the reason for every guess
+(upstream gateway, default route, DHCP from upstream), so a wrong guess can be seen and
+corrected before anything is written.
+
+![Setup page step 1: interfaces with a tick box, what each was detected as, its physical port and the reasons](docs/screenshots/setup-light.png)
+
+**Priorities.** Devices, aliases or ports marked for a CAKE class, and what is loaded now with
+the bytes marked so far: the proof that a priority is in effect.
+
+![Priorities page: a priority list by MAC and alias, a device picker and the "Now loaded" table](docs/screenshots/priorities-light.png)
+
+**Bufferbloat test result.** Throughput, round trips and CAKE's wait and drops on one time
+axis, with a shared crosshair, so a delay spike can be matched to the load that caused it
+(lab numbers, not an internet line).
+
+![Three stacked bufferbloat charts, throughput, round trip and CAKE wait and drops, with the same second highlighted on each](docs/screenshots/bufferbloat-result-light.png)
+
+**Glossary.** The terms the pages use, starting with the 15 most common mix-ups (shaping vs
+policing, bandwidth vs delay, ping vs ICMP), each with a source. Every underlined term on the
+other pages links here.
+
+![Glossary page: a search box and cards for the 15 most common mix-ups](docs/screenshots/glossary-light.png)
+
+**Dashboard widget "Shaper status".** Whether CAKE is really running on each pipe, on the
+OPNsense dashboard.
+
+![OPNsense dashboard with the Shaper status widget next to core's Gateways, Traffic and Interfaces widgets](docs/screenshots/dashboard-widget-light.png)
+
+**Dark theme** and **phone (390 px wide)**: the same sharing page in OPNsense's dark theme, and
+on a phone.
+
+![Sharing page in the dark theme](docs/screenshots/sharing-dark.png)
+
+<img src="docs/screenshots/sharing-phone-light.png" width="260" alt="Sharing page at 390 px wide: the recording line, the Limiting now badge and the stacked chart">
+
+## What it does
+
 What it only reads:
 
 - **Firewall › Shaper › Shaper Insight: status**: for each pipe, the scheduler the kernel is
   really running (CAKE through the [os-cake](https://github.com/pletch/opnsense-cake) plugin,
   or FQ-CoDel), the configuration compared with the kernel, settings the scheduler ignores,
-  per-tin CAKE counters and a live graph. Health checks S1-S9: weights that do nothing,
+  per-tin CAKE counters and a live graph. Health checks S1-S10: weights that do nothing,
   objects that stay loaded, rules that never match or can never match, internet links shaped
   differently, priority marks that failed to load. With no shaper configured they say so
   instead of reporting "OK".
@@ -31,9 +92,10 @@ What it only reads:
 - **Firewall › Shaper › Shaper Insight: sharing** ("Who uses each pipe"): per pipe, the rate of
   every local host stacked under the pipe's payload cap (the configured rate × 1500 / (1500 +
   CAKE overhead): 840 Mbit/s with 42 bytes carries at most ~817 Mbit/s of IP packets), an
-  "Idle / Limiting now" badge (limiting = above 90 % of the cap or CAKE dropped packets in the
-  last step), CAKE drops, ECN marks and average wait, and with diffserv the rate per CAKE tin
-  with the Bulk threshold (1/16 of the rate). It explains why a single speed test cannot show
+  "Idle / Limiting now" badge (limiting = at 90 % of the cap or more in 2 of the last 3 steps,
+  or at least 1 drop/s while at half the cap or more), CAKE drops, ECN marks and average wait,
+  and with diffserv the rate per CAKE tin with the Bulk threshold (1/16 of the rate) and whether
+  Background traffic is using the free line, sharing or yielding. It explains why a single speed test cannot show
   sharing. Windows from 10 minutes to a year. Full privilege only: it lists local addresses.
 - **History sampler** (on by default; the sharing page switches it off): every 10 s it reads
   the CAKE counters (`sysctl`), the shaper rule counters (`ipfw show`) and the pf states
@@ -42,11 +104,18 @@ What it only reads:
   `/var/db/rrd` (`pipeN-shaper.rrd`, `pipeN-tins-shaper.rrd`; 10 s for 6 hours, 1 minute for 3
   days, 10 minutes for 30 days, 1 hour for a year; about 1.9 + 1.3 MB per CAKE pipe with four
   tins), which survive reboots; Reporting › Health lists them under "shaper". Hosts are kept for
-  6 hours in `/var/run/shaperinsight/hosts.jsonl` (top 8 per pipe and step), not in RRDs: an RRD
+  6 hours in `/var/run/shaperinsight/hosts.jsonl` (top 16 per pipe and step; the page draws 3 to 8
+  of them, setting "Hosts drawn", and groups the rest), not in RRDs: an RRD
   has a fixed set of series and the busiest hosts keep changing. It runs as a service
   (`daemon(8)`, System › Diagnostics › Services lists it), starts at boot and on install, and
-  stops on uninstall; its RRD files stay, like core's. Cost measured on the lab VM is on the
-  sharing page and in TESTING.md.
+  stops on uninstall; its RRD files stay, like core's. Cost, measured on a 4-core lab VM: idle
+  about 15 ms of CPU a sample and 18 MB; 22 000 states about 230 ms and 46 MB with the per-host
+  read every 30 s; above 50 000 states the per-host view pauses and memory is given back once
+  they drop. The sharing page shows the current cost; a cron job (`sampler.ensure`, every 5
+  minutes) restarts a sampler that stopped while switched on, and health check S10 reports it.
+- **Tables**: every table sorts (click or Enter on a header), host tables show Name, IP, MAC and
+  Manufacturer (from core's IEEE list, as the ARP page does; no lookups leave the firewall), and
+  alias, pipe, queue and interface names link to their page in core with the content on hover.
 - **Glossary** and a **dashboard widget** "Shaper status".
 
 What it changes, and only when you press the button:
@@ -86,7 +155,7 @@ os-cake is optional and is detected at runtime. Without it the plan uses FQ-CoDe
 shares the line fairly between connections but not between devices, and priorities have no
 effect.
 
-Screenshots: `docs/screenshots/`. How it was tested, with the results: `TESTING.md`.
+How it was tested, with the results: `TESTING.md`.
 
 ## Install for testing (from source)
 

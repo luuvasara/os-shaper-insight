@@ -239,7 +239,7 @@ window.SA = (function () {
         nodes.forEach(function (node) {
             /* earliest wanted match first, then go on in the text after it */
             while (node && node.parentNode) {
-                const scope = node.parentElement.closest('td, th') || root;
+                const scope = node.parentElement.closest('td, th, .tabulator-cell') || root;
                 let best = null;
                 AUTO_TERMS.forEach(function (t) {
                     if (!glossary.terms[t.id] || scope.querySelector('.sa-term[data-term="' + t.id + '"]')) {
@@ -271,11 +271,220 @@ window.SA = (function () {
         let timer = null;
         new MutationObserver(function () {
             if (timer === null) {
-                timer = setTimeout(function () { timer = null; autoTerms(root); }, 150);
+                timer = setTimeout(function () { timer = null; autoTerms(root); tooltips(root); }, 150);
             }
         }).observe(root, {childList: true, subtree: true});
         loadGlossary().then(function () { autoTerms(root); });
     });
+
+    /*
+     * SA.ref(kind, name, info): an alias, pipe, queue, rule, interface or gateway name as core's
+     * firewall rules grid shows an alias (26.7 filter_rule.volt): the name with its content as a
+     * tooltip, then a list icon that opens the object in its core page ("#tab&edit=UUID" deep links
+     * are handled by core's opnsense_ui.js). info: {uuid, content, key (interface)}. The icon link gets
+     * an accessible name, which core's lacks.
+     */
+    const REFS = {
+        alias: ['/ui/firewall/alias/index#aliases', 'Edit alias'],
+        pipe: ['/ui/trafficshaper#pipes', 'Edit pipe'],
+        queue: ['/ui/trafficshaper#queues', 'Edit queue'],
+        rule: ['/ui/trafficshaper#rules', 'Edit shaper rule'],
+        interface: ['/interfaces.php?if=', 'Edit interface'],
+        gateway: ['/ui/routing/configuration', 'Edit gateways']
+    };
+
+    function ref(kind, name, info) {
+        info = info || {};
+        const r = REFS[kind];
+        const tip = info.content || info.description || name;
+        let href = null;
+        if (r && kind === 'interface') {
+            href = info.key ? r[0] + encodeURIComponent(info.key) : null;
+        } else if (r) {
+            href = r[0] + (info.uuid ? (r[0].indexOf('#') >= 0 ? '&' : '#') + 'edit=' + encodeURIComponent(info.uuid) : '');
+        }
+        return '<span class="sa-ref" tabindex="0" data-toggle="tooltip" data-html="true" title="' + esc(esc(tip)) + '">' +
+            esc(name) + '&nbsp;</span>' + (href ? '<a href="' + esc(href) + '" data-toggle="tooltip" title="' + esc(r[1]) +
+            '" aria-label="' + esc(r[1] + ' ' + name) + '"><i class="fa fa-fw fa-list" aria-hidden="true"></i></a>' : '');
+    }
+
+    function tooltips(root) {
+        if ($.fn.tooltip) {
+            $(root || document).find('[data-toggle="tooltip"]').not('[data-sa-tip]').attr('data-sa-tip', '1')
+                .tooltip({container: 'body'});
+        }
+    }
+
+    /*
+     * SA.table(el, columns, rows, opts): every table in the plugin (user feedback 2026-11-22: sortable columns
+     * with sensible defaults, legend swatches where a row has a chart series, numbers right-aligned,
+     * an empty state, usable at 390 px), built on core's Tabulator (26.7 loads it on every MVC page,
+     * Base/ControllerBase.php). One instance per element id: a refresh replaces the data and keeps the
+     * sort, also when the page re-renders the element.
+     *   columns: [{title, field, type: 'text' | 'num' | 'ip' | 'html', fmt(value, row) for num/text display,
+     *              swatch: true (row.colour), sortField (sort by another field), sort: false}]
+     *   rows: plain objects; html cells are markup built with esc()/words(); rows with _children expand
+     *   opts: {sort: [field, 'asc' | 'desc'], empty: text, label: accessible name, tree: rows may expand later,
+     *          scroll: long list (own scroll box, virtual rendering beyond 100 rows)}
+     *   column wide: true hides it at 767 px or less
+     *   a num column with html: true shows fmt()'s markup as is (build it with esc())
+     * Tabulator's sortable headers are not focusable: they get tabindex 0, and Enter or Space sorts.
+     * tools/shots/tables-check.js checks every table on the rendered pages for this.
+     */
+    const tables = {};
+    const tableSorts = {};
+
+    function textOf(html) {
+        const d = document.createElement('div');
+        d.innerHTML = html || '';
+        return d.textContent;
+    }
+
+    function natural(a, b) {
+        return String(a === null || a === undefined ? '' : a).localeCompare(
+            String(b === null || b === undefined ? '' : b), undefined, {numeric: true, sensitivity: 'base'});
+    }
+
+    function numeric(a, b) {
+        const x = (a === null || a === undefined || a === '') ? -Infinity : Number(a);
+        const y = (b === null || b === undefined || b === '') ? -Infinity : Number(b);
+        return x === y ? 0 : (x < y ? -1 : 1);
+    }
+
+    function swatch(colour) {
+        if (colour === 'hatch' || /^tin-[0-3]$/.test(colour || '')) {
+            return '<span class="sa-swatch sa-' + colour + '" aria-hidden="true"></span>';
+        }
+        return colour ? '<span class="sa-swatch" style="background:' + esc(colour) + '" aria-hidden="true"></span>' : '';
+    }
+
+    function columnDef(c) {
+        const d = {title: c.title, field: c.field, headerSort: c.sort !== false, vertAlign: 'middle',
+            minWidth: c.minWidth || 48, resizable: false, headerWordWrap: true, variableHeight: true,
+            /* wide: hidden on a phone (767 px or less), where the row shows it as a second line instead */
+            visible: !(c.wide && window.matchMedia && window.matchMedia('(max-width: 767px)').matches)};
+        let show;
+        if (c.type === 'num') {
+            d.hozAlign = 'right';
+            d.headerHozAlign = 'right';
+            d.sorter = numeric;
+            show = function (v, row) {
+                const out = c.fmt ? c.fmt(v, row) : (v === null || v === undefined ? '–' : v);
+                return c.html ? out : esc(out);
+            };
+        } else if (c.type === 'ip') {
+            d.sorter = function (a, b) { return window.SAip ? SAip.compare(a, b) : natural(a, b); };
+            show = function (v) { return esc(v || ''); };
+        } else if (c.type === 'html') {
+            d.sorter = function (a, b) { return natural(textOf(a), textOf(b)); };
+            show = function (v) { return v || ''; };
+        } else {
+            d.sorter = natural;
+            show = function (v, row) { return esc(c.fmt ? c.fmt(v, row) : (v === null || v === undefined ? '' : v)); };
+        }
+        if (c.sortField) {
+            d.sorter = function (a, b, ra, rb) {
+                const x = ra.getData()[c.sortField];
+                const y = rb.getData()[c.sortField];
+                return typeof x === 'number' && typeof y === 'number' ? numeric(x, y) : natural(x, y);
+            };
+        }
+        d.formatter = function (cell) {
+            const row = cell.getRow().getData();
+            return (c.swatch ? swatch(row.colour) : '') + show(cell.getValue(), row);
+        };
+        return d;
+    }
+
+    /* Tabulator makes its scroll box focusable (tabindex 0) inside role=grid, which breaks the grid's
+       row structure for screen readers (axe aria-required-children). Only a box that really scrolls
+       sideways needs to be keyboard-reachable (axe scrollable-region-focusable): keep it there only. */
+    function fixScrollFocus(node) {
+        const holder = node.querySelector('.tabulator-tableholder');
+        if (!holder) {
+            return;
+        }
+        if (holder.scrollWidth > holder.clientWidth + 2 || holder.scrollHeight > holder.clientHeight + 2) {
+            holder.setAttribute('tabindex', '0');
+        } else {
+            holder.removeAttribute('tabindex');
+        }
+    }
+
+    function keyboardSort(t) {
+        t.getColumns().forEach(function (col) {
+            if (col.getDefinition().headerSort === false) {
+                return;
+            }
+            const h = col.getElement();
+            if (h.getAttribute('tabindex') === '0') {
+                return;
+            }
+            h.setAttribute('tabindex', '0');
+            h.addEventListener('keydown', function (e) {
+                if (e.key !== 'Enter' && e.key !== ' ') {
+                    return;
+                }
+                e.preventDefault();
+                const cur = t.getSorters().find(function (s) { return s.field === col.getField(); });
+                t.setSort(col.getField(), cur && cur.dir === 'asc' ? 'desc' : 'asc');
+            });
+        });
+    }
+
+    function table(el, columns, rows, opts) {
+        opts = opts || {};
+        const node = el && el.jquery ? el[0] : (typeof el === 'string' ? document.querySelector(el) : el);
+        if (!node || typeof Tabulator === 'undefined') {
+            return null;
+        }
+        const id = node.id;
+        let have = tables[id];
+        /* up to 100 rows every row is in the page; beyond, only the visible window is (host simulation: 1,000 rows
+           are 14,434 DOM nodes and 148 ms a sort, a 40-row window 5 ms) */
+        const virtual = !!opts.scroll && rows.length > 100;
+        if (have && have.element === node && have._saVirtual !== virtual) {
+            tableSorts[id] = have.getSorters().map(function (s) { return {column: s.field, dir: s.dir}; });
+            have.destroy();
+            delete tables[id];
+            have = null;
+        }
+        if (have && have.element === node) {
+            have.replaceData(rows);
+            return have;
+        }
+        const sort = tableSorts[id] || (opts.sort ? [{column: opts.sort[0], dir: opts.sort[1]}] : []);
+        const tree = !!opts.tree || rows.some(function (r) { return r._children && r._children.length; });
+        const t = new Tabulator(node, {
+            /* narrow (phone): columns share the width and their text wraps, so the page does not scroll
+               sideways (390 px); wide: each column as wide as its data, the table no wider than that */
+            data: rows, columns: columns.map(columnDef), layout: node.clientWidth < 700 ? 'fitColumns' : 'fitDataTable', initialSort: sort,
+            placeholder: opts.empty || 'Nothing to show.', dataTree: tree, dataTreeStartExpanded: false,
+            dataTreeChildIndent: 14,
+            dataTreeExpandElement: '<button type="button" class="sa-tree" aria-expanded="false" aria-label="Show the grouped rows">+</button>',
+            dataTreeCollapseElement: '<button type="button" class="sa-tree" aria-expanded="true" aria-label="Hide the grouped rows">−</button>',
+            /* a long list scrolls in its own box (header stays in view), at most min(60vh, 640px) */
+            maxHeight: opts.scroll ? 'min(60vh, 640px)' : false, renderVertical: virtual ? 'virtual' : 'basic'
+        });
+        t._saVirtual = virtual;
+        node.classList.add('sa-grid');
+        if (columns.some(function (c) { return c.swatch; })) {
+            node.setAttribute('data-sa-swatch', '1');   /* tables-check.js: rows must show their chart colour */
+        }
+        if (opts.label) {
+            node.setAttribute('aria-label', opts.label);
+        }
+        t.on('tableBuilt', function () {
+            keyboardSort(t);
+            fixScrollFocus(node);
+        });
+        t.on('renderComplete', function () { fixScrollFocus(node); });
+        t.on('dataSorted', function (sorters) {
+            tableSorts[id] = sorters.map(function (s) { return {column: s.field, dir: s.dir}; });
+        });
+        tables[id] = t;
+        return t;
+    }
 
     /*
      * poll(fn, seconds): call fn() now and every `seconds` while the tab is visible;
@@ -463,6 +672,6 @@ window.SA = (function () {
         }
     }
 
-    return {esc, words, chip, autoTerms, badge, why, rate, num, ms, sig, poll, get, loadGlossary, cssVar, labelCells, countdown, unescapeApi,
+    return {esc, words, chip, autoTerms, table, swatch, ref, tooltips, badge, why, rate, num, ms, sig, poll, get, loadGlossary, cssVar, labelCells, countdown, unescapeApi,
         termDialog, termBlocks, claimDialog, whys, CLS, ICON, WORD};
 })();

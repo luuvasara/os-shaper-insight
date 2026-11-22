@@ -59,8 +59,7 @@ import json
 import os
 import re
 import sys
-import xml.etree.ElementTree as ET
-from lib import run, CONFIG
+from lib import run, CONFIG, config_root
 
 IPFW = '/sbin/ipfw'
 SET = '7'
@@ -95,7 +94,7 @@ def ipfw(*args):
 
 
 def read_cfg():
-    return ET.parse(CONFIG).getroot()
+    return config_root(CONFIG)      # under a shared lock, retried (Verification 4, N10)
 
 
 def priorities(root):

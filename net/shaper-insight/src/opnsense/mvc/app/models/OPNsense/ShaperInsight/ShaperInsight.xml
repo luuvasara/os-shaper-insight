@@ -1,6 +1,6 @@
 <model>
     <mount>//OPNsense/ShaperInsight</mount>
-    <version>0.7.0</version>
+    <version>0.8.0</version>
     <description>Shaper Insight: page preferences, link choices and device priorities</description>
     <items>
         <general>
@@ -20,6 +20,15 @@
                 <Default>1</Default>
                 <Required>Y</Required>
             </sampler>
+            <!-- coloured hosts on the sharing chart; the rest are one grey band (at most 8: more colours
+                 cannot be told apart, host simulation in TESTING.md) -->
+            <hosts_shown type="IntegerField">
+                <Default>8</Default>
+                <Required>Y</Required>
+                <MinimumValue>3</MinimumValue>
+                <MaximumValue>8</MaximumValue>
+                <ValidationMessage>Between 3 and 8 hosts.</ValidationMessage>
+            </hosts_shown>
         </general>
         <bufferbloat>
             <!-- the load and the latency targets of the bufferbloat test; every default is a third

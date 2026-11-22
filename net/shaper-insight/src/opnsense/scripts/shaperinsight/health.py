@@ -79,7 +79,12 @@ if __name__ == '__main__':
         reloaded = os.stat('/var/run/shaperinsight-ipfw-reload').st_mtime
     except OSError:
         reloaded = None
-    checks = run_checks(snap, wans, prio_last, priorities_set(), reloaded)
-    no_shaper = all(i['text'].startswith('Not applicable: no shaper') for c in checks if c['id'] != 'S9' for i in c['items'])
+    try:
+        import sampler
+        samp = {'enabled': sampler.enabled(), 'state': sampler.run_state(), 'watchdog': sampler.watchdog_info()}
+    except Exception:
+        samp = None
+    checks = run_checks(snap, wans, prio_last, priorities_set(), reloaded, sampler=samp)
+    no_shaper = all(i['text'].startswith('Not applicable: no shaper') for c in checks if c['id'] not in ('S9', 'S10') for i in c['items'])
     print(json.dumps({'checks': checks, 'no_shaper': no_shaper, 'wans': wans, 'detect_error': det['error'],
                       'generated': snap['generated'], 'elapsed_ms': round((time.monotonic() - t0) * 1000, 1)}))

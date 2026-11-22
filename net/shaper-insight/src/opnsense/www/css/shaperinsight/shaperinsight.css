@@ -197,3 +197,45 @@
 .sa-explain summary { cursor: pointer; min-height: 24px; }
 .sa-latest { max-width: 640px; }
 .sa-latest caption { caption-side: top; color: inherit; }
+
+/* SA.table (core's Tabulator): swatches match the chart series; the tree button opens grouped rows;
+   at 390 px the table scrolls sideways inside its own box (the holder is keyboard-focusable) */
+.sa-swatch { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px;
+    border: 1px solid rgba(128, 128, 128, 0.6); border-radius: 2px; }
+.sa-tree { border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 3px;
+    min-width: 24px; min-height: 24px; line-height: 1; padding: 0 4px; margin-right: 6px; }
+.sa-grid { margin-bottom: 12px; font-size: inherit; }
+.sa-grid .tabulator-col[tabindex="0"]:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.sa-grid .tabulator-placeholder-contents { white-space: normal !important; padding: 12px !important; }
+.sa-grid .tabulator-cell { white-space: normal; overflow-wrap: anywhere; }
+/* core's Tabulator CSS greys the empty-state text below 4.5:1; use the page's text colour */
+.sa-grid .tabulator-placeholder-contents { color: inherit !important; font-weight: normal !important; font-size: inherit !important; }
+.sa-grid .tabulator-col-title { white-space: normal; }
+
+/* host tables and the sharing legend (host simulation, TESTING.md): names cut with an ellipsis and the full name on
+   hover, never an address; IPv6 may break anywhere; the phone shows "IP · maker" under the name */
+.sa-name { display: inline-block; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.sa-muted { font-style: italic; }
+.sa-sub { display: none; }
+.sa-grid .tabulator-cell[tabulator-field="ip"], .sa-grid .tabulator-cell[tabulator-field="mac"] { overflow-wrap: anywhere; text-overflow: clip; }
+.sa-hatch { background: repeating-linear-gradient(135deg, #deddd6 0 2px, #8a8983 2px 3.5px); }
+.sa-legend { list-style: none; padding: 0; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.sa-legend li { display: inline-flex; align-items: center; }
+.sa-find { margin: 8px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sa-find input { max-width: 260px; }
+@media (max-width: 767px) {
+    .sa-name { max-width: 20ch; }
+    .sa-sub { display: block; font-size: 0.9em; overflow-wrap: anywhere; }
+}
+/* no side borders: Tabulator fits the columns to the element's width, and a 1 px border each side of the
+   scroll box (core's theme) made the table 2 px wider than the box (a sideways scroll at 390 px) */
+.sa-grid.tabulator, .sa-grid .tabulator-tableholder { border-left: 0; border-right: 0; }
+/* the CAKE tins' textures, as on the sharing chart: Best Effort vertical, Bulk horizontal, Video dots, Voice grid */
+.sa-tin-0 { background: repeating-linear-gradient(90deg, transparent 0 3px, currentColor 3px 4.5px); }
+.sa-tin-1 { background: repeating-linear-gradient(0deg, transparent 0 3px, currentColor 3px 4.5px); }
+.sa-tin-2 { background: radial-gradient(currentColor 1.4px, transparent 1.8px) 0 0 / 6px 6px; }
+.sa-tin-3 { background: repeating-linear-gradient(90deg, transparent 0 3px, currentColor 3px 4.5px),
+                        repeating-linear-gradient(0deg, transparent 0 3px, currentColor 3px 4.5px); }
+/* room for the sort arrow in every sortable header, so a right-aligned title (Rate, Share) never runs
+   under it (core's theme drops Tabulator's own padding) */
+.sa-grid .tabulator-col.tabulator-sortable .tabulator-col-title { padding-right: 18px !important; box-sizing: border-box; }

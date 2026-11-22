@@ -53,6 +53,9 @@ function shaperinsight_cron()
     if ($wanted) {
         $jobs[]['autocron'] = ['/usr/local/sbin/configctl -d shaperinsight prio refresh', '*'];
     }
+    /* the history sampler's watchdog, every 5 minutes: starts it again when it is switched on but not
+       running (review N10); switched off in the settings, it does nothing */
+    $jobs[]['autocron'] = ['/usr/local/sbin/configctl -d shaperinsight sampler.ensure', '*/5'];
     return $jobs;
 }
 

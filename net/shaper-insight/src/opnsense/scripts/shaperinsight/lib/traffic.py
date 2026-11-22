@@ -93,20 +93,35 @@ def parse_addr(text):
     return _ip(t)
 
 
-def parse_states(text):
-    """ `pfctl -vss` -> [{key, proto, left, left_nat, arrow, right, right_nat, b0, b1, age}]
+def iter_lines(text):
+    """ the lines of text one by one, without the list splitlines() builds (at 20k states the
+    pfctl output is ~10 MB; a list of its lines would double that, review N11) """
+    i = 0
+    n = len(text)
+    while i < n:
+        j = text.find('\n', i)
+        if j < 0:
+            j = n
+        yield text[i:j]
+        i = j + 1
+
+
+def iter_states(text):
+    """ `pfctl -vss` -> {key, proto, left, left_nat, arrow, right, right_nat, b0, b1, age} one at a
+    time; key is a hash of the state line (64 bit), not the line, to keep the per-state memory small.
     b0 counts the packets in the state's own direction (out for "->", in for "<-"), b1 the reverse """
-    states, cur = [], None
-    for line in text.splitlines():
+    cur = None
+    for line in iter_lines(text):
         if not line.startswith((' ', '\t')):
+            if cur is not None:
+                yield cur
             m = STATE_RE.match(line)
             cur = None
             if m:
-                cur = {'key': line.rsplit(None, 1)[0], 'proto': m.group(2),
+                cur = {'key': hash(line.rsplit(None, 1)[0]), 'proto': m.group(2),
                        'left': parse_addr(m.group(3)), 'left_nat': parse_addr(m.group(4)) if m.group(4) else None,
                        'arrow': m.group(5), 'right': parse_addr(m.group(6)),
                        'right_nat': parse_addr(m.group(7)) if m.group(7) else None, 'b0': 0, 'b1': 0, 'age': None}
-                states.append(cur)
             continue
         if cur is None or 'bytes' not in line:
             continue
@@ -116,7 +131,13 @@ def parse_states(text):
         m = AGE_RE.search(line)
         if m:
             cur['age'] = int(m.group(1) or 0) * 86400 + int(m.group(2)) * 3600 + int(m.group(3)) * 60 + int(m.group(4))
-    return states
+    if cur is not None:
+        yield cur
+
+
+def parse_states(text):
+    """ iter_states as a list (tests, `sampler.py once`) """
+    return list(iter_states(text))
 
 
 def parse_ifconfig(text):
@@ -250,10 +271,15 @@ class HostCounter:
     def __init__(self):
         self.last = {}
         self.primed = False
+        self.count = 0
 
     def update(self, states, topo, interval):
+        """ states: any iterable (a generator keeps one state in memory at a time); self.count is
+        the number of states read """
         seen, deltas = {}, {}
+        self.count = 0
         for st in states:
+            self.count += 1
             a = attribute(st, topo)
             if a is None:
                 continue

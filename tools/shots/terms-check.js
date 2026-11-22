@@ -85,7 +85,7 @@ const WORDS = {
                 for (const [w, id] of Object.entries(words)) {
                     if (!re(w).test(n.textContent)) { continue; }
                     out.page[id] = out.page[id] || { word: w, chips: 0 };
-                    const cell = el.closest('td, th');
+                    const cell = el.closest('td, th, .tabulator-cell');
                     if (cell && !cell.querySelector('.sa-term[data-term="' + id + '"]')) {
                         out.cell.push(w + ' in "' + cell.textContent.trim().slice(0, 80) + '"');
                     }

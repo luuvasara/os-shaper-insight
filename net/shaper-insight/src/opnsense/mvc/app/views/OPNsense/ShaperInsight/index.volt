@@ -25,6 +25,7 @@
  #}
 <link rel="stylesheet" href="{{ cache_safe('/ui/css/shaperinsight/shaperinsight.css') }}">
 <script src="{{ cache_safe('/ui/js/chart.umd.min.js') }}"></script>
+<script src="{{ cache_safe('/ui/js/shaperinsight/ipcompare.js') }}"></script>
 <script src="{{ cache_safe('/ui/js/shaperinsight/common.js') }}"></script>
 <script>
 'use strict';
@@ -77,43 +78,51 @@ $(document).ready(function () {
         });
         const hz = d.sysctl['kern.hz'];
         rows.push(['kern.hz (timer)', SA.esc(hz || '?') + (hz === '1000' ? ' ' + SA.badge('ok', 'fine') : '')]);
-        $('#sa-module tbody').html(rows.map(function (r) {
-            return '<tr><th scope="row">' + SA.esc(r[0]) + '</th><td>' + r[1] + '</td></tr>';
-        }).join(''));
+        SA.table('#sa-module', [{title: '{{ lang._("Item") }}', field: 'item', sortField: 'idx'}, {title: '{{ lang._("State") }}', field: 'state', type: 'html'}],
+            rows.map(function (r, k) { return {idx: k, item: r[0], state: r[1]}; }), {sort: ['item', 'asc'], empty: '–'});
+    }
+
+    const RANK = {bad: 0, warn: 1, info: 2, ok: 3};
+    /* one colour per pipe for the live chart and the pipes table: its place among all pipes, by number */
+    let pipeOrder = [];
+    function pipeColour(num) {
+        const k = pipeOrder.indexOf(String(num));
+        return k < 0 ? null : PALETTE[k % PALETTE.length];
     }
 
     function renderPipes(d) {
-        if (!d.pipes.length) {
-            $('#sa-pipes tbody').html('<tr><td colspan="6">' + SA.words(d.summary.text) +
-                ' <a href="/ui/trafficshaper">Firewall: Shaper</a></td></tr>');
-            return;
-        }
-        $('#sa-pipes tbody').html(d.pipes.map(function (p) {
-            const rateTxt = SA.rate(p.bandwidth_kernel !== null ? p.bandwidth_kernel : p.bandwidth_config);
-            return '<tr><th scope="row">' + SA.esc(pipeName(p)) + (p.enabled ? '' : ' <em>(disabled)</em>') + '</th>' +
-                '<td class="sa-num">' + SA.esc(rateTxt) + '</td>' +
-                '<td>' + SA.words(p.intended_words || p.intended) +
-                    (p.sched_why ? '<br><span class="sa-meta">' + SA.words(p.sched_why) + '</span>' : '') + '</td>' +
-                '<td><strong>' + (p.loaded ? SA.words(p.loaded_words || p.loaded) : 'not loaded') + '</strong></td>' +
-                '<td class="sa-num">' + SA.esc(p.rules_via_queue) + ' / ' + SA.esc(p.rules_direct) + '</td>' +
-                '<td>' + SA.badge(p.level) + ' ' + SA.words(p.text) + SA.why(p.claim) + '</td></tr>';
-        }).join(''));
+        pipeOrder = d.pipes.map(function (p) { return String(p.number); }).sort();
+        SA.table('#sa-pipes', [
+            {title: '{{ lang._("Pipe") }}', field: 'pipe', type: 'html', swatch: true, sortField: 'number'},
+            {title: '{{ lang._("Limit") }}', field: 'limit', type: 'num', fmt: function (v) { return v === null ? '–' : SA.rate(v); }},
+            {title: '{{ lang._("Configured") }}', field: 'configured', type: 'html'},
+            {title: '{{ lang._("Running in the kernel") }}', field: 'loaded', type: 'html'},
+            {title: '{{ lang._("Rules via queue / direct") }}', field: 'via', type: 'num', fmt: function (v, row) { return v + ' / ' + row.direct; }},
+            {title: '{{ lang._("Verdict") }}', field: 'verdict', type: 'html', sortField: 'rank'}
+        ], d.pipes.map(function (p) {
+            const lim = p.bandwidth_kernel !== null ? p.bandwidth_kernel : p.bandwidth_config;
+            return {number: p.number, colour: pipeColour(p.number), limit: lim,
+                pipe: SA.ref('pipe', pipeName(p), {uuid: p.uuid, content: SA.rate(lim) + ', ' + (p.intended || '')}) +
+                    (p.enabled ? '' : ' <em>(disabled)</em>'),
+                configured: SA.words(p.intended_words || p.intended) +
+                    (p.sched_why ? '<br><span class="sa-meta">' + SA.words(p.sched_why) + '</span>' : ''),
+                loaded: '<strong>' + (p.loaded ? SA.words(p.loaded_words || p.loaded) : 'not loaded') + '</strong>',
+                via: p.rules_via_queue, direct: p.rules_direct, rank: RANK[p.level],
+                verdict: SA.badge(p.level) + ' ' + SA.words(p.text) + SA.why(p.claim)};
+        }), {sort: ['pipe', 'asc'], label: '{{ lang._("Pipes: configured and running") }}',
+            empty: (d.summary && d.summary.text ? d.summary.text.replace(/\{\{term:[^|}]+\|?([^}]*)\}\}/g, '$1') : '') +
+                ' ({{ lang._("Firewall: Shaper") }})'});
     }
 
-    function renderFindings(sel, items, cols) {
-        if (!items.length) {
-            $(sel + ' tbody').html('<tr><td colspan="' + cols.length + '">' +
-                SA.badge('ok', 'nothing found') + '</td></tr>');
-            return;
-        }
-        const order = {bad: 0, warn: 1, info: 2, ok: 3};
-        items = items.slice().sort(function (a, b) { return order[a.level] - order[b.level]; });
-        $(sel + ' tbody').html(items.map(function (f) {
-            return '<tr>' + cols.map(function (c, i) {
-                const v = c === 'verdict' ? SA.badge(f.level) + ' ' + SA.words(f.text) + SA.why(f.claim) : SA.esc(f[c]);
-                return i === 0 ? '<th scope="row">' + v + '</th>' : '<td>' + v + '</td>';
-            }).join('') + '</tr>';
-        }).join(''));
+    function renderFindings(sel, items, cols, titles) {
+        SA.table(sel, cols.map(function (c, k) {
+            return c === 'verdict' ? {title: titles[k], field: 'verdict', type: 'html', sortField: 'rank'} :
+                {title: titles[k], field: c};
+        }), items.map(function (f) {
+            const row = {rank: RANK[f.level], verdict: SA.badge(f.level) + ' ' + SA.words(f.text) + SA.why(f.claim)};
+            cols.forEach(function (c) { if (c !== 'verdict') { row[c] = f[c] === undefined || f[c] === null ? '' : String(f[c]); } });
+            return row;
+        }), {sort: ['verdict', 'asc'], empty: '{{ lang._("Nothing found: every object matches.") }}'});
     }
 
     function renderTins(d) {
@@ -124,32 +133,30 @@ $(document).ready(function () {
                 '{{ lang._("No per-tin counters: no CAKE scheduler is loaded (or cake-kmod is older than 1.3).") }}') + '</p>');
             return;
         }
-        let html = '';
         cake.forEach(function (p) {
             p.instances.forEach(function (inst) {
-                html += '<h3>' + SA.esc(pipeName(p)) + (p.instances.length > 1 ? ', instance ' + SA.esc(inst.inst) : '') + '</h3>' +
-                    '<div class="table-responsive"><table class="table table-condensed table-striped sa-table">' +
-                    '<caption class="sr-only">Per-tin counters for ' + SA.esc(pipeName(p)) + '</caption><thead><tr>' +
-                    '<th scope="col">{{ lang._("Tin") }}</th><th scope="col" class="sa-num">{{ lang._("Packets") }}</th>' +
-                    '<th scope="col" class="sa-num">{{ lang._("Data") }}</th>' +
-                    '<th scope="col" class="sa-num">' + SA.chip('drop', 'Drops') + '</th>' +
-                    '<th scope="col" class="sa-num">' + SA.chip('ecn', 'ECN marks') + '</th>' +
-                    '<th scope="col" class="sa-num">{{ lang._("Wait: base / avg / peak") }}</th>' +
-                    '<th scope="col" class="sa-num">{{ lang._("Flows: light / busy") }}</th>' +
-                    '<th scope="col" class="sa-num">{{ lang._("Backlog") }}</th></tr></thead><tbody>' +
-                    inst.tins.map(function (t) {
-                        return '<tr><th scope="row">' + SA.esc(t.name) + '</th>' +
-                            '<td class="sa-num">' + SA.num(t.pkts) + '</td>' +
-                            '<td class="sa-num">' + SA.esc(bytes(t.bytes)) + '</td>' +
-                            '<td class="sa-num">' + SA.num(t.drops) + '</td>' +
-                            '<td class="sa-num">' + SA.num(t.marks) + '</td>' +
-                            '<td class="sa-num">' + SA.ms(t.base_delay) + ' / ' + SA.ms(t.avg_delay) + ' / ' + SA.ms(t.peak_delay) + '</td>' +
-                            '<td class="sa-num">' + SA.num(t.sparse) + ' / ' + SA.num(t.bulk) + '</td>' +
-                            '<td class="sa-num">' + SA.num(t.backlog) + ' pkts</td></tr>';
-                    }).join('') + '</tbody></table></div>';
+                const id = 'sa-tins-' + p.number + '-' + String(inst.inst).replace(/[^0-9a-z]/gi, '');
+                if (!document.getElementById(id)) {
+                    if (!$('#sa-tins .sa-tins-box').length) { $('#sa-tins').empty(); }
+                    $('#sa-tins').append('<div class="sa-tins-box"><h3>' + SA.esc(pipeName(p)) +
+                        (p.instances.length > 1 ? ', instance ' + SA.esc(inst.inst) : '') + '</h3><div id="' + id + '"></div></div>');
+                }
+                SA.table('#' + id, [
+                    {title: '{{ lang._("Tin") }}', field: 'name', sortField: 'idx'},
+                    {title: '{{ lang._("Packets") }}', field: 'pkts', type: 'num', wide: true, fmt: function (v) { return SA.num(v); }},
+                    {title: '{{ lang._("Data") }}', field: 'bytes', type: 'num', fmt: function (v) { return bytes(v); }},
+                    {title: '{{ lang._("Drops") }}', field: 'drops', type: 'num', fmt: function (v) { return SA.num(v); }},
+                    {title: '{{ lang._("ECN marks") }}', field: 'marks', type: 'num', fmt: function (v) { return SA.num(v); }},
+                    {title: '{{ lang._("Wait: base / avg / peak") }}', field: 'avg', type: 'num',
+                        fmt: function (v, t) { return SA.ms(t.base) + ' / ' + SA.ms(v) + ' / ' + SA.ms(t.peak); }},
+                    {title: '{{ lang._("Flows: light / busy") }}', field: 'bulk', type: 'num', wide: true, fmt: function (v, t) { return SA.num(t.sparse) + ' / ' + SA.num(v); }},
+                    {title: '{{ lang._("Backlog (packets)") }}', field: 'backlog', type: 'num', wide: true, fmt: function (v) { return SA.num(v); }}
+                ], inst.tins.map(function (t, k) {
+                    return {idx: k, name: t.name, pkts: t.pkts, bytes: t.bytes, drops: t.drops, marks: t.marks, base: t.base_delay,
+                        avg: t.avg_delay, peak: t.peak_delay, sparse: t.sparse, bulk: t.bulk, backlog: t.backlog};
+                }), {sort: ['name', 'asc'], label: 'Per-tin counters for ' + pipeName(p), empty: '{{ lang._("No tins reported.") }}'});
             });
         });
-        $('#sa-tins').html(html);
     }
 
     function bytes(b) {
@@ -248,7 +255,7 @@ $(document).ready(function () {
         const sets = order.map(function (k, i) {
             const s = ring.series[k];
             const delay = s.axis === 'y1';
-            const n = pipes.indexOf(s.pipe);
+            const n = pipeOrder.indexOf(s.pipe) >= 0 ? pipeOrder.indexOf(s.pipe) : pipes.indexOf(s.pipe);
             const last = s.data.length - 1;
             return {label: s.label, endLabel: s.end, data: s.data, yAxisID: s.axis,
                 borderColor: PALETTE[n % PALETTE.length], backgroundColor: PALETTE[n % PALETTE.length],
@@ -309,10 +316,11 @@ $(document).ready(function () {
         document.body.setAttribute('data-sa-ready', '1');
         renderModule(d);
         renderPipes(d);
-        renderFindings('#sa-diff', d.diff, ['object', 'field', 'intended', 'loaded', 'verdict']);
-        renderFindings('#sa-ignored', d.ignored, ['object', 'setting', 'value', 'verdict']);
+        renderFindings('#sa-diff', d.diff, ['object', 'field', 'intended', 'loaded', 'verdict'],
+            ['{{ lang._("Object") }}', '{{ lang._("Setting") }}', '{{ lang._("Configured") }}', '{{ lang._("Loaded") }}', '{{ lang._("Verdict") }}']);
+        renderFindings('#sa-ignored', d.ignored, ['object', 'setting', 'value', 'verdict'],
+            ['{{ lang._("Object") }}', '{{ lang._("Setting") }}', '{{ lang._("Value") }}', '{{ lang._("Verdict") }}']);
         renderTins(d);
-        ['#sa-pipes', '#sa-diff', '#sa-ignored'].forEach(SA.labelCells);
         feedChart(d);
         if (d.errors && d.errors.length) {
             $('#sa-errors').html('<div class="alert alert-warning" role="alert">' + SA.esc(d.errors.join(' / ')) + '</div>');
@@ -356,18 +364,39 @@ $(document).ready(function () {
     }
 
     /* not polled: it reads the neighbour tables and the interfaces once */
+    let hostInfo = {};
+    let devNames = {};
     function loadShares() {
         /* devices/shares needs the full Shaper Insight privilege: it lists MACs with their addresses,
-           which the read-only status role must not see (review S6) */
-        return SA.get('/api/shaperinsight/devices/shares').then(function (d) {
+           which the read-only status role must not see (review S6); so do names and manufacturers */
+        return Promise.all([
+            SA.get('/api/shaperinsight/sampler/hosts').then(function (r) { hostInfo = r.hosts || {}; }).catch(function () {}),
+            SA.get('/api/shaperinsight/devices/list').then(function (r) {
+                (r.devices || []).forEach(function (x) { if (x.hostname) { devNames[x.address] = x.hostname; } });
+            }).catch(function () {})
+        ]).then(function () { return SA.get('/api/shaperinsight/devices/shares'); }).then(function (d) {
             if (!d || !Array.isArray(d.several)) { throw new Error((d && d.message) || 'no data'); }
-            $('#sa-shares').html(d.several.length ? '<ul class="sa-check-items">' + d.several.map(function (x) {
-                return '<li>' + SA.badge('info') + ' <code>' + SA.esc(x.mac) + '</code> (' + SA.esc(x.if) + '): ' +
-                    x.addresses.length + ' {{ lang._("addresses") }}, ' + SA.esc(x.addresses.join(', ')) + '. ' +
-                    '{{ lang._("Up to") }} ' + x.addresses.length + ' {{ lang._("shares while it sends from all of them.") }}' +
-                    SA.whys(['host-isolation-per-address']) + '</li>';
-            }).join('') + '</ul>' : '<p>' + SA.badge('ok') + ' {{ lang._("No local device used more than one address recently") }} (' +
-                d.devices + ' {{ lang._("devices seen") }}).' + SA.whys(['host-isolation-per-address']) + '</p>');
+            /* one row per address (Name, IP, MAC, Manufacturer, Interface), grouped under its device */
+            if (!$('#sa-shares-table').length) {
+                $('#sa-shares').html('<p class="sa-meta" id="sa-shares-note"></p><div id="sa-shares-table"></div>');
+            }
+            $('#sa-shares-note').html((d.several.length ? SA.badge('info', d.several.length + ' {{ lang._("device(s) with several addresses") }}') :
+                SA.badge('ok') + ' {{ lang._("No local device used more than one address recently") }}') + ' (' + d.devices +
+                ' {{ lang._("devices seen") }}). {{ lang._("While such a device sends from all of its addresses at once, it gets up to one share per address.") }}' +
+                SA.whys(['host-isolation-per-address']));
+            const rows = [];
+            d.several.forEach(function (x) {
+                x.addresses.forEach(function (a) {
+                    const ip = String(a).split('/')[0];
+                    const info = hostInfo[ip] || {};
+                    rows.push({name: devNames[ip] || '', ip: ip, mac: x.mac + ' (' + x.addresses.length + ' {{ lang._("addresses") }})',
+                        vendor: info.vendor || '', iface: x.if});
+                });
+            });
+            SA.table('#sa-shares-table', [{title: '{{ lang._("Name") }}', field: 'name'}, {title: '{{ lang._("IP") }}', field: 'ip', type: 'ip'},
+                {title: '{{ lang._("MAC") }}', field: 'mac'}, {title: '{{ lang._("Manufacturer") }}', field: 'vendor'},
+                {title: '{{ lang._("Interface") }}', field: 'iface'}], rows,
+                {sort: ['mac', 'asc'], empty: '{{ lang._("No device with several addresses right now.") }}'});
         }).catch(function (e) {
             $('#sa-shares').html('<p>' + SA.badge('bad', '{{ lang._("Not available") }}') + ' ' + SA.esc(e.message) +
                 ' <span class="sa-meta">{{ lang._("This list needs the full Firewall: Shaper: Shaper Insight privilege; the read-only status role does not include it.") }}</span></p>');
@@ -399,20 +428,7 @@ $(document).ready(function () {
 <section class="content-box sa-section" aria-labelledby="sa-h-pipes">
     <h2 id="sa-h-pipes">{{ lang._('Is CAKE really running?') }}</h2>
     <p class="sa-lead">{{ lang._('Each pipe as configured on Firewall: Shaper, next to the scheduler the kernel reports for it right now. The configuration keeps saying FQ-CoDel when CAKE is on, because os-cake swaps the scheduler while loading; the kernel column is the proof.') }}</p>
-    <div class="table-responsive">
-        <table class="table table-condensed table-striped sa-table sa-stack" id="sa-pipes">
-            <caption class="sr-only">{{ lang._('Pipes: configured and running scheduler') }}</caption>
-            <thead><tr>
-                <th scope="col">{{ lang._('Pipe') }}</th>
-                <th scope="col" class="sa-num">{{ lang._('Limit') }}</th>
-                <th scope="col">{{ lang._('Configured') }}</th>
-                <th scope="col">{{ lang._('Running in the kernel') }}</th>
-                <th scope="col" class="sa-num" title="{{ lang._('Rules that reach the pipe through a queue / rules aimed at the pipe itself') }}">{{ lang._('Rules via queue / direct') }}</th>
-                <th scope="col">{{ lang._('Verdict') }}</th>
-            </tr></thead>
-            <tbody><tr><td colspan="6">–</td></tr></tbody>
-        </table>
-    </div>
+    <div id="sa-pipes"></div>
 </section>
 
 <section class="content-box sa-section" aria-labelledby="sa-h-chart">
@@ -427,32 +443,18 @@ $(document).ready(function () {
 <section class="content-box sa-section" aria-labelledby="sa-h-diff">
     <h2 id="sa-h-diff">{{ lang._('Configuration compared with the kernel') }}</h2>
     <p class="sa-lead">{{ lang._('What Firewall: Shaper says, next to what is loaded. Apply adds and changes objects but never removes old ones, so deleted or disabled objects can stay loaded.') }}</p>
-    <div class="table-responsive">
-        <table class="table table-condensed table-striped sa-table sa-stack" id="sa-diff">
-            <caption class="sr-only">{{ lang._('Intended configuration versus loaded kernel objects') }}</caption>
-            <thead><tr><th scope="col">{{ lang._('Object') }}</th><th scope="col">{{ lang._('Setting') }}</th>
-                <th scope="col">{{ lang._('Configured') }}</th><th scope="col">{{ lang._('Loaded') }}</th><th scope="col">{{ lang._('Verdict') }}</th></tr></thead>
-            <tbody><tr><td colspan="5">–</td></tr></tbody>
-        </table>
-    </div>
+    <div id="sa-diff"></div>
 </section>
 
 <section class="content-box sa-section" aria-labelledby="sa-h-ignored">
     <h2 id="sa-h-ignored">{{ lang._('Settings that have no effect') }}</h2>
     <p class="sa-lead">{{ lang._('Fields you can fill in on Firewall: Shaper that the chosen scheduler or the shaper template ignores.') }}</p>
-    <div class="table-responsive">
-        <table class="table table-condensed table-striped sa-table sa-stack" id="sa-ignored">
-            <caption class="sr-only">{{ lang._('Ignored settings') }}</caption>
-            <thead><tr><th scope="col">{{ lang._('Object') }}</th><th scope="col">{{ lang._('Setting') }}</th>
-                <th scope="col">{{ lang._('Value') }}</th><th scope="col">{{ lang._('Verdict') }}</th></tr></thead>
-            <tbody><tr><td colspan="4">–</td></tr></tbody>
-        </table>
-    </div>
+    <div id="sa-ignored"></div>
 </section>
 
 <section class="content-box sa-section" aria-labelledby="sa-h-health">
     <h2 id="sa-h-health">{{ lang._('Health checks') }}</h2>
-    <p class="sa-lead">{{ lang._('Nine checks for mistakes that the shaper pages do not warn about: weights that do nothing, objects that stay loaded, rules that never match or can never match, internet links that are shaped differently. Each finding says why it matters and how to fix it.') }}</p>
+    <p class="sa-lead">{{ lang._('Ten checks for mistakes that the shaper pages do not warn about: weights that do nothing, objects that stay loaded, rules that never match or can never match, internet links that are shaped differently, a history sampler that stopped. Each finding says why it matters and how to fix it.') }}</p>
     <p class="sa-meta"><span id="sa-health-meta" aria-live="polite">–</span>
         <button type="button" id="sa-health-run" class="btn btn-default btn-xs"><i class="fa fa-stethoscope" aria-hidden="true"></i> {{ lang._('Check again') }}</button></p>
     <div id="sa-health"><p>–</p></div>
@@ -469,11 +471,6 @@ $(document).ready(function () {
 
 <section class="content-box sa-section" aria-labelledby="sa-h-module">
     <h2 id="sa-h-module">{{ lang._('Module and timing') }}</h2>
-    <div class="table-responsive">
-        <table class="table table-condensed sa-table sa-kv" id="sa-module">
-            <caption class="sr-only">{{ lang._('CAKE module status and kernel settings') }}</caption>
-            <tbody><tr><td>–</td></tr></tbody>
-        </table>
-    </div>
+    <div id="sa-module"></div>
     <p class="sa-meta"><a href="/ui/shaperinsight/compiled">{{ lang._('Show the compiled configuration (for forum posts)') }}</a></p>
 </section>

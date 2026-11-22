@@ -24,6 +24,7 @@
  # POSSIBILITY OF SUCH DAMAGE.
  #}
 <link rel="stylesheet" href="{{ cache_safe('/ui/css/shaperinsight/shaperinsight.css') }}">
+<script src="{{ cache_safe('/ui/js/shaperinsight/ipcompare.js') }}"></script>
 <script src="{{ cache_safe('/ui/js/shaperinsight/common.js') }}"></script>
 <script>
 'use strict';
@@ -54,7 +55,8 @@ $(document).ready(function () {
                 '<label for="sa-pick-' + n + '" class="sa-meta">{{ lang._("shaped on its WAN") }}</label>' :
                 '<input type="checkbox" class="sa-pick" id="sa-pick-' + n + '" data-key="' + SA.esc(i.key) + '"' +
                 (i.selected ? ' checked' : '') + '> <label for="sa-pick-' + n + '">{{ lang._("Shape") }} ' + SA.esc(i.descr) + '</label>';
-            return '<tr><th scope="row">' + SA.esc(i.descr) + ' <span class="sa-meta">(' + SA.esc(i.key) + ')</span></th>' +
+            return '<tr><th scope="row">' + SA.ref('interface', i.descr, {key: i.key, content: i.key + ': ' + i.path.join(' → ')}) +
+                ' <span class="sa-meta">(' + SA.esc(i.key) + ')</span></th>' +
                 '<td>' + pick + '</td>' +
                 '<td>' + SA.badge(i.role === 'maybe' ? 'warn' : (i.role === 'wan' ? 'info' : 'ok'), ROLE[i.role] || i.role) +
                 (i.chosen ? ' <span class="sa-meta">{{ lang._("(your choice:") }} ' + (i.selected ? '{{ lang._("shaped)") }}' : '{{ lang._("not shaped)") }}') + '</span>' : '') + '</td>' +
@@ -170,46 +172,52 @@ $(document).ready(function () {
             /* "Keep mine" on every link, or nothing ticked: say so instead of counting objects */
             $('#sa-plan-sum').text('{{ lang._("Nothing to apply") }}: ' + plan.nothing + '.');
         }
+        /* every object of the plan in SA.table (sortable; Change, then object kind, by default) */
+        const KIND_ORDER = {pipe: 0, queue: 1, rule: 2, cake: 3};
+        const ACT_ORDER = {add: 0, change: 1, same: 2, remove: 3};
+        const PLAN_COLS = [
+            {title: '{{ lang._("Change") }}', field: 'act', type: 'html', sortField: 'actRank'},
+            {title: '{{ lang._("Object") }}', field: 'kind', type: 'html', sortField: 'kindRank'},
+            {title: '{{ lang._("Number") }}', field: 'num', type: 'num', fmt: function (v, row) { return row.id; }},
+            {title: '{{ lang._("Name") }}', field: 'name', type: 'html'},
+            {title: '{{ lang._("Settings") }}', field: 'fields', type: 'html', sort: false},
+            {title: '{{ lang._("Why") }}', field: 'why', type: 'html'}];
+        const planRow = function (o, action) {
+            const id = o.kind === 'rule' ? '#' + o.sequence : (o.kind === 'cake' ? '{{ lang._("pipe") }} ' + o.pipe : o.number);
+            const act = action === 'remove' ? '<span class="sa-add" aria-hidden="true">−</span> {{ lang._("Remove") }}' :
+                (action === 'change' ? '<span class="sa-add" aria-hidden="true">~</span> {{ lang._("Change") }}' :
+                (action === 'same' ? '<span class="sa-add" aria-hidden="true">=</span> {{ lang._("No change") }}' :
+                '<span class="sa-add" aria-hidden="true">+</span> {{ lang._("Add") }}'));
+            const diff = o.changes ? Object.keys(o.changes).map(function (k) {
+                return SA.esc(k) + ': ' + SA.esc(o.changes[k][0]) + ' → ' + SA.esc(o.changes[k][1]);
+            }).join(', ') : '';
+            /* objects that exist already link to core's shaper page, as core's rules grid links aliases */
+            const kindRef = o.kind === 'cake' ? 'cake' : o.kind;  /* os-cake's own page: tooltip only */
+            const name = action === 'add' || !o.description ? SA.esc(o.description || '') :
+                SA.ref(kindRef, o.description, {uuid: o.uuid, content: KIND[o.kind] + ' ' + id});
+            return {act: act + (diff ? '<div class="sa-meta">' + diff + '</div>' : ''), actRank: ACT_ORDER[action] || 0,
+                kind: KIND[o.kind], kindRank: KIND_ORDER[o.kind] || 0, id: String(id),
+                num: Number(o.kind === 'rule' ? o.sequence : (o.kind === 'cake' ? o.pipe : o.number)) || 0,
+                name: name, fields: fields(o.fields), why: SA.words(o.why) + SA.whys(o.claims || [])};
+        };
         $('#sa-plan').html(plan.links.map(function (l, li) {
-            const rows = l.objects.map(function (o) {
-                const id = o.kind === 'rule' ? '#' + o.sequence : (o.kind === 'cake' ? '{{ lang._("pipe") }} ' + o.pipe : o.number);
-                const act = o.action === 'change' ? '<span class="sa-add" aria-hidden="true">~</span> {{ lang._("Change") }}' :
-                    (o.action === 'same' ? '<span class="sa-add" aria-hidden="true">=</span> {{ lang._("No change") }}' :
-                    '<span class="sa-add" aria-hidden="true">+</span> {{ lang._("Add") }}');
-                const diff = o.changes ? Object.keys(o.changes).map(function (k) {
-                    return SA.esc(k) + ': ' + SA.esc(o.changes[k][0]) + ' → ' + SA.esc(o.changes[k][1]);
-                }).join(', ') : '';
-                return '<tr><td>' + act + (diff ? '<div class="sa-meta">' + diff + '</div>' : '') + '</td><td>' + KIND[o.kind] + '</td>' +
-                    '<td class="sa-num">' + SA.esc(id) + '</td><td>' + SA.esc(o.description) + '</td>' +
-                    '<td>' + fields(o.fields) + '</td><td>' + SA.words(o.why) + SA.whys(o.claims) + '</td></tr>';
-            }).join('');
             const c = l.counts;
             return '<details class="sa-check"><summary>' + SA.esc(l.name) + ': {{ lang._("every object, with its settings and reason") }} ' +
                 '<span class="sa-meta">(' + (c.pipe || 0) + ' {{ lang._("pipes") }}, ' + (c.queue || 0) + ' {{ lang._("queues") }}, ' +
                 (c.rule || 0) + ' {{ lang._("rules") }}, ' + (c.cake || 0) + ' {{ lang._("CAKE entries") }})</span></summary>' +
-                '<div class="table-responsive"><table class="table table-condensed table-striped sa-table sa-stack" id="sa-plan-' + li + '">' +
-                '<caption class="sr-only">' + SA.esc(l.name) + '</caption><thead><tr><th scope="col">{{ lang._("Change") }}</th>' +
-                '<th scope="col">{{ lang._("Object") }}</th><th scope="col" class="sa-num">{{ lang._("Number") }}</th>' +
-                '<th scope="col">{{ lang._("Name") }}</th><th scope="col">{{ lang._("Settings") }}</th><th scope="col">{{ lang._("Why") }}</th>' +
-                '</tr></thead><tbody>' + rows + '</tbody></table></div></details>';
+                '<div id="sa-plan-' + li + '"></div></details>';
         }).join(''));
+        plan.links.forEach(function (l, li) {
+            SA.table('#sa-plan-' + li, PLAN_COLS, l.objects.map(function (o) { return planRow(o, o.action || 'add'); }),
+                {sort: ['kind', 'asc'], label: l.name, empty: '{{ lang._("No objects for this link.") }}'});
+        });
         if ((plan.remove || []).length) {
             /* Shaper Insight's own objects the new plan has no place for: removed by the same apply */
             $('#sa-plan').append('<details class="sa-check" open><summary>{{ lang._("Objects from an earlier apply that the new plan no longer needs") }} ' +
-                '<span class="sa-meta">(' + plan.remove.length + ')</span></summary><div class="table-responsive">' +
-                '<table class="table table-condensed table-striped sa-table sa-stack" id="sa-plan-remove"><thead><tr>' +
-                '<th scope="col">{{ lang._("Change") }}</th><th scope="col">{{ lang._("Object") }}</th>' +
-                '<th scope="col" class="sa-num">{{ lang._("Number") }}</th><th scope="col">{{ lang._("Name") }}</th>' +
-                '<th scope="col">{{ lang._("Settings") }}</th><th scope="col">{{ lang._("Why") }}</th></tr></thead><tbody>' +
-                plan.remove.map(function (o) {
-                    const id = o.kind === 'rule' ? '#' + o.sequence : (o.kind === 'cake' ? '{{ lang._("pipe") }} ' + o.pipe : o.number);
-                    return '<tr><td><span class="sa-add" aria-hidden="true">−</span> {{ lang._("Remove") }}</td><td>' + KIND[o.kind] +
-                        '</td><td class="sa-num">' + SA.esc(id) + '</td><td>' + SA.esc(o.description) + '</td><td>' + fields(o.fields) +
-                        '</td><td>' + SA.esc(o.why) + '</td></tr>';
-                }).join('') + '</tbody></table></div></details>');
-            SA.labelCells('#sa-plan-remove');
+                '<span class="sa-meta">(' + plan.remove.length + ')</span></summary><div id="sa-plan-remove"></div></details>');
+            SA.table('#sa-plan-remove', PLAN_COLS, plan.remove.map(function (o) { return planRow(o, 'remove'); }),
+                {sort: ['kind', 'asc'], label: '{{ lang._("Objects to remove") }}', empty: '–'});
         }
-        plan.links.forEach(function (l, li) { SA.labelCells('#sa-plan-' + li); });
         /* only with "Keep mine" does a link with your rules get skipped (N6) */
         const blocked = plan.mode === 'skip' ? [...new Set(plan.conflicts.map(function (c) { return c.link; }))] : [];
         $('#sa-plan-plain').html(plan.summary.map(function (t) { return '<li>' + SA.words(t.text) + SA.whys(t.claims) + '</li>'; }).join('') +
@@ -401,7 +409,7 @@ $(document).ready(function () {
     <p class="sa-lead">{{ lang._('An interface counts as an internet link when it has at least one strong sign: a gateway OPNsense marks as facing the internet ("Upstream gateway" ticked, or one it gets by DHCP, PPPoE or DHCPv6), the default route, or an address it gets from upstream. A plain gateway is only "possibly internet": it may lead to another router of yours (example: a lab router behind 10.200.0.0/16 must not be slowed to the internet speed). Tick or untick any row to correct the guess; the choice is saved. All internet links on one physical port share one speed limit, so they get one shaper together.') }}</p>
     <p class="sa-meta" id="sa-pick-vpn">{{ lang._('Tunnels (WireGuard, OpenVPN, ...) cannot be ticked: their packets are shaped on the internet link they leave by.') }}</p>
     <div class="table-responsive">
-        <table class="table table-condensed table-striped sa-table sa-stack" id="sa-ifs">
+        <table class="table table-condensed table-striped sa-table sa-stack" id="sa-ifs" data-sa-form="a form: sorting would move the ticks while you set them">
             <caption class="sr-only">{{ lang._('Interfaces and why each is an internet link or not') }}</caption>
             <thead><tr><th scope="col">{{ lang._('Interface') }}</th><th scope="col">{{ lang._('Shape it') }}</th><th scope="col">{{ lang._('Detected as') }}</th>
                 <th scope="col">{{ lang._('Device down to the physical port') }}</th><th scope="col">{{ lang._('Why we think so') }}</th></tr></thead>
@@ -418,7 +426,7 @@ $(document).ready(function () {
     <p class="sa-meta" id="sa-line-why">{{ lang._("Line type: what plugs into the wall. Telling it lets CAKE count each packet's real size on the wire, so the shaper can run closer to full speed. Every line adds its own framing to each packet: Ethernet or fibre 38 bytes (+4 for a VLAN tag, +8 for PPPoE), cable (DOCSIS) 18, VDSL2 with PPPoE 30, ADSL 8 to 48 and in 53-byte ATM cells. Not sure? Keep the suggestion, which is worked out from the interface.") }}</p>
     <form id="sa-rates">
         <div class="table-responsive">
-            <table class="table table-condensed table-striped sa-table sa-stack" id="sa-rates-table">
+            <table class="table table-condensed table-striped sa-table sa-stack" id="sa-rates-table" data-sa-form="a form: sorting would move the fields while you type">
                 <caption class="sr-only">{{ lang._('Speeds and line type of each internet link') }}</caption>
                 <thead><tr><th scope="col">{{ lang._('Link') }}</th><th scope="col">{{ lang._('Download, Mbit/s') }}</th>
                     <th scope="col">{{ lang._('Upload, Mbit/s') }}</th><th scope="col">{{ lang._('Line type') }}</th></tr></thead>

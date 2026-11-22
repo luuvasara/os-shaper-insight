@@ -20,13 +20,15 @@ to (H/M/L, N, F, S, I).
 
 ## Automated checks
 
-| Check | Result (at 1.0.f) |
+| Check | Result (at 1.0.h unless noted) |
 |---|---|
-| `python3 -m unittest discover -s tests` | 149 tests, OK |
+| `python3 -m unittest discover -s tests` | 201 tests, OK |
 | `tools/claims/build.py --check` | 26 claim ids used, 27 in `claims.json`, 0 problems |
-| ruff `--select F`, pycodestyle (E501 ignored), `php -l` (PHP 8.5), phpcs (core ruleset), shellcheck | clean |
+| ruff `--select F`, pycodestyle (E501 ignored), `php -l` (PHP 8.5), phpcs (core ruleset), shellcheck | clean (at 1.0.f) |
 | axe-core 4 (WCAG 2.0/2.1/2.2 A+AA + best practice), every page, 1920x1080 and 390x844, light and dark | 0 violations in this plugin's markup; the remaining hits come from OPNsense core pages (menu search box, sidebar toggle size, navbar landmarks, dark footer links) |
 | `tools/shots/terms-check.js` | every technical term on 6 rendered pages has a glossary chip; fails as intended when chips are removed (`SA_TERMS_NEGATIVE=1`) |
+| `tools/shots/tables-check.js` | every table on the five pages is built by the shared table component: sortable by keyboard, `aria-sort`, an empty state, a swatch where rows have a chart series, linked object names with hover, no sideways scroll at 390 px; fails as intended on a plain table (`SA_TABLES_NEGATIVE=1`) |
+| `tools/shots/hosts-stress.js` | the sharing page answered with 1,000 fake hosts (documentation addresses): default view 4 rows, the opened list about 41 rows and 500 nodes in the DOM, search finds one host and says so, IP sort puts IPv4 first |
 | `tools/shots/crosshair.js` | the three stacked bufferbloat charts share one x mapping and a hover activates the same second on all three |
 
 ## Lab tests of Apply, Remove and uninstall
@@ -79,7 +81,8 @@ Mbit/s (CAKE) A+, 0.8 ms added. Cancel stops every load process.
 | Polling | widget every 15 s, page every 5 s, both paused while the tab is hidden |
 | Forks per poll | one dnctl, one ipfw, one sysctl; snapshot cached 3 s and shared by page and widget |
 | Page JavaScript | shared `common.js` 22 KB plus 4-26 KB inline per page (source size at 1.0.f, uncompressed); core's Chart.js, no new library |
-| History sampler | 150 ms CPU per 10 s sample with 6231 pf states (about 1.5 % of one core), 16 ms with 60 states; RSS 17 MB; fixed-size RRD files (about 1.9 MB per pipe plus 1.3 MB per diffserv pipe) |
+| History sampler (1.0.f, 2 vCPUs) | 150 ms CPU per 10 s sample with 6231 pf states (about 1.5 % of one core), 16 ms with 60 states; RSS 17 MB; fixed-size RRD files (about 1.9 MB per pipe plus 1.3 MB per diffserv pipe) |
+| History sampler (1.0.g, 4-core lab VM) | idle about 15 ms a sample and 18 MB; 22,500 states about 230 ms a sample with the per-host read every 30 s, RSS 46 MB; 59,000 states: per-host view paused, 5 ms a sample; RSS back to 18.7 MB after the states expired |
 
 `pfctl -vss` took 20 ms with about 6000 states on a busy home firewall (the one measurement on
 real hardware).
@@ -98,7 +101,60 @@ Each round's fixes have regression tests named after the ids.
 | Independent review | H1-H3, M1-M8, L1-L8 | H1 a dead job reverting over later edits; H2 uninstall during a countdown; H3 slow links shaped above line rate; M3/M4/M8 one lock and a plan digest so Apply writes what was previewed; M5 priority load failures; M6 fairness claims without CAKE |
 | Verification 1-3 | N1-N8 | N1-N3 `make upgrade` is `pkg delete` + `pkg add`, so uninstall must keep a confirmed setup; N4 `pkg delete` before `register.php remove`; N5 install must be kernel-neutral; N6 "Disable mine" must say what it switches off; N8 file modes |
 | Topology test | F1-F14 | F1 any gateway counted as internet (a 2.5 Gbit/s transit network was planned at 17/88 Mbit/s); F2 one rate pair for all links; F3 no override; F4 prefix-delegated LANs; F5 dynamic gateways only exist at runtime; F7 line-type overhead |
+| Verification 4 | N9-N14 | N9 per-host download rates included what CAKE dropped (pf counts before the shaper: hosts summed to 107 % of the pipe); N10 a config save could switch the sampler off; N11 sampler cost grew with pf states without a cap; N12 a slow `pfctl` blanked the pipe history; N13 old readings judged by today's cap; N14 minor (restart state, broken or symlinked RRD files) |
 | Security review | S1-S14, I1 | S1 uninstall hook failing open; S2 huge aliases; S3 stale control files; S5 a GET that changed state; S6 neighbour list for the read-only role; S9 model built before `Config::lock()`; S10 pid read from a stale file; S12 redactor bypasses |
+
+## Verification 4 fixes (1.0.g)
+
+| Id | Fix | Result |
+|---|---|---|
+| N9 | the host stack is scaled to what the pipe delivered; the offered rate is its own dashed line | lab under drops: 10,000 rows, none with hosts above the pipe (worst 38.3 vs 38.2 Mbit/s, rounding) |
+| N10 | config.xml read under a shared lock with retries; a failed read is never "off"; cron watchdog `sampler.ensure` every 5 min and health check S10 | 32,000 and 34,000 config saves in 150 s: the sampler kept running, no empty rows |
+| N11 | state read capped at 50,000 (per-host view paused, pipes go on), per-host interval adapts to its cost (10 to 60 s), memory given back after a flood | numbers in the performance table above |
+| N12 | pipes read every tick on their own time stamp; `pfctl` cut at 5 s | `pfctl` delayed 30 s: no empty pipe rows, one log line |
+| N13, N14 | each reading judged by the cap of its time; restarting state; a broken RRD moved aside after 3 failures; a symlinked RRD replaced | unit tests |
+| `pkg add -f` | the sampler watches the package version file and stops on a change or removal | unit test; upgrade rehearsal 1.0.f to 1.0.g with priorities loaded: shaper, rules, sets, tables and counters unchanged, only the watchdog cron line added |
+
+## Bulk tin (Background) status (1.0.g, 1.0.h)
+
+With CAKE diffserv4 the Background class (Bulk tin) is guaranteed about 1/16 of the line and
+takes the rest only when nothing else needs it. The sharing page says which of these applies,
+from the newest 10 s step: **free line** (the other classes carry at most 2 % of the line),
+**yielding** (Bulk near its floor, at most 1.5x, while the other classes fill a busy line),
+**sharing**, **idle**, or **besteffort** (priorities have no effect). 1.0.g called 3 % of the line
+in other traffic "free"; 1.0.h fixed that. Tests: `BulkTin` in `tests/test_sharing.py`.
+
+## Sharing page with 100 and 1,000 hosts (host simulation)
+
+A seeded generator fed the sharing page 100 and 1,000 hosts (10 % without a name, long and
+non-Latin names, 15 % IPv6, random and shared MACs, Pareto-distributed rates) and the page was
+measured in Chrome at 1920x1080 and 390x844, light and dark:
+
+| | 100 hosts | 1,000 hosts |
+|---|---|---|
+| One series per host: chart update | 564 ms | 46.8 s (the page polls every 10 s) |
+| Top-N chart: update | 18-36 ms | 18-32 ms |
+| All table rows rendered / a 40-row window | 12-18 / 5 ms | 122-143 / 5 ms |
+| DOM elements, list opened (all rows) | 1,562 | 14,434 |
+| Every host's series for 6 h, gzip | 340 kB | 3.4 MB |
+| Newest-step table only, gzip | 2.8 kB | 21 kB |
+
+What changed because of it: at most 8 coloured hosts (more colours cannot be told apart; the
+rest is one neutral band, "not attributed" a hatched one); a host keeps its colour while it is
+shown (colour by rank repainted a visible host 8 times in 5 minutes); two palette colours that
+read as grey or too light were dropped; the legend is HTML above the chart (Chart.js silently
+dropped 57 of 102 legend entries); the full host list comes from a newest-step endpoint with
+server-side search, sort and paging, fetched only while the list is open, and is windowed
+beyond 100 rows; on a phone the IP, MAC and maker columns fold into a second line.
+
+## Tables (1.0.g)
+
+Every table uses one component on core's Tabulator: sortable by click or keyboard with
+`aria-sort`, addresses sorted by value (IPv4 numerically, then IPv6; `tests/test_tables.py`
+includes a control that a text sort differs), an empty state, Name / IP / MAC / Manufacturer
+columns for hosts (maker from core's IEEE OUI list, nothing looked up outside the firewall),
+"shared xN" for a MAC used by several addresses and "private (random) MAC" for locally
+administered ones, and object names linked to their page in core.
 
 ## Known gaps
 

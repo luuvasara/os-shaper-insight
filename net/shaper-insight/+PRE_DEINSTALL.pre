@@ -70,7 +70,10 @@ if [ -x "${APPLY}" ]; then
 	fi
 	# the history sampler stops before its script goes; its RRDs stay in /var/db/rrd like
 	# core's own (Reporting: Settings can reset them)
-	/usr/local/opnsense/scripts/shaperinsight/sampler.py stop >/dev/null 2>&1 || true
+	# stop escalates to SIGKILL after 5 s; a failure is logged, not ignored (Verification 4)
+	if ! /usr/local/opnsense/scripts/shaperinsight/sampler.py stop | grep -q '"running": false'; then
+		/usr/bin/logger -t shaperinsight "sampler: could not be stopped before uninstall; it ends itself within 10 s when its package is gone"
+	fi
 	# the priority refresh job goes now: prio.py purge left its "removing" flag, so the cron
 	# hook returns nothing (review S4)
 	/usr/local/sbin/configctl cron restart >/dev/null 2>&1 || true
