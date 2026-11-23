@@ -32,6 +32,7 @@
       S3 enabled rules that never matched        S7 unused pipes and queues
       S4 all internet links follow the same rules S8 FQ-CoDel flows and memory per instance
 """
+import re
 import time
 from collections import defaultdict
 
@@ -64,12 +65,135 @@ def _on(x):
 RELOAD_GRACE = 900          # an ipfw reload this recent explains a rule with 0 packets
 
 
-def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now=None, sampler=None):
+VIA = re.compile(r'\b(?:(in|out) )?(via|recv|xmit) (\S+)')
+QUIET_BYTES = 1000000       # under 1 MB an interface carried only ARP, DHCP and gateway pings
+IPV6_PROTOS = ('ip6', 'ipv6', 'ipv6-icmp', 'icmp6')
+
+
+def cap(text):
+    return text[:1].upper() + text[1:]
+
+
+def fmt_bytes(n):
+    for unit, size in (('TB', 1e12), ('GB', 1e9), ('MB', 1e6), ('kB', 1e3)):
+        if n >= size:
+            return '%.1f %s' % (n / size, unit)
+    return '%d bytes' % n
+
+
+def since_text(cnt):
+    """ "the last rule reload (23 Nov 17:02)" or "boot (21 Nov 09:10)" """
+    when = time.strftime('%d %b %H:%M', time.localtime(cnt['ts'])) if cnt.get('ts') else ''
+    what = 'the last rule reload' if cnt.get('since') == 'reload' else 'boot'
+    return '%s (%s)' % (what, when) if when else what
+
+
+def match_text(body):
+    """ "queue 10002 tcp from 192.168.1.11 to any out via vtnet1" -> "tcp from 192.168.1.11 to any" """
+    body = re.sub(r'^(queue|pipe)\s+\d+\s+', '', body)
+    return VIA.sub('', body).strip()
+
+
+def ipv6_only(r, body):
+    """ the rule can only match IPv6: an IPv6 protocol in the config or as ipfw's protocol word """
+    if (r.get('proto') or '').lower() in IPV6_PROTOS:
+        return True
+    words = body.split()
+    return len(words) > 2 and words[2].lower() in IPV6_PROTOS
+
+
+def parse_netstat(text):
+    """ netstat -ibn --libxo json -> {dev: {'in': bytes, 'out': bytes}} (the <Link#n> line per device) """
+    import json
+    try:
+        rows = json.loads(text)['statistics']['interface']
+    except (ValueError, KeyError, TypeError):
+        return {}
+    out = {}
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and str(row.get('network', '')).startswith('<Link#'):
+            try:
+                out[row['name']] = {'in': int(row.get('received-bytes', 0)), 'out': int(row.get('sent-bytes', 0)),
+                                    'in_pkts': int(row.get('received-packets', 0)),
+                                    'out_pkts': int(row.get('sent-packets', 0))}
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def own_bytes(counters, parents):
+    """ a VLAN parent's counters include its VLANs' frames plus their 4-byte tag (lab, 2026-11-23:
+    3,000 frames on vlan0.102 added 4,326,000 bytes there and 4,337,996 on vtnet1); take them off,
+    so a rule on the parent is judged by the parent's own traffic
+    :param parents: {vlan device: parent device} """
+    own = {dev: dict(c) for dev, c in counters.items()}
+    for child, parent in parents.items():
+        c, p = counters.get(child), own.get(parent)
+        if c and p:
+            for d in ('in', 'out'):
+                p[d] = max(0, p[d] - c[d] - 4 * c.get(d + '_pkts', 0))
+    return own
+
+
+def interface_view(det, netstat_now, netstat_base=None, reloaded=None, boot=None):
+    """ what S3 needs to know about interfaces, from data health.py already has
+    :param det: lib.detect result (interfaces, routes)
+    :param netstat_now: netstat -ibn --libxo json now; netstat_base: the same at the last rule reload
+        (rc.ipfw writes it into the reload stamp), so the bytes compare with the rule counters
+    :return: {ifaces: {key: {descr, device, ipv6_off, gateway}}, bytes: {dev: {in, out, since, ts}},
+              default: [devs]}
+    """
+    parents = {i['device']: i['vlan_parent'] for i in det.get('interfaces') or []
+               if i.get('vlan_parent') and i.get('device')}
+    now_c = parse_netstat(netstat_now or '')
+    base_c = parse_netstat(netstat_base or '') if netstat_base else {}
+    # raw counters only grow; one that went down (interface re-created) or is missing from the
+    # reload's copy is counted from boot. VLAN frames come off the parent after that step
+    raw, since = {}, {}
+    for dev, c in now_c.items():
+        b = base_c.get(dev)
+        if b and reloaded and all(c[k] >= b[k] for k in c):
+            raw[dev], since[dev] = {k: c[k] - b[k] for k in c}, ('reload', reloaded)
+        else:
+            raw[dev], since[dev] = dict(c), ('boot', boot)
+    changed = True
+    while changed:      # parent and VLANs must cover the same span before one is taken off the other
+        changed = False
+        for dev, parent in parents.items():
+            if dev in since and parent in since and since[dev] != since[parent]:
+                for d in (dev, parent):
+                    raw[d], since[d] = dict(now_c[d]), ('boot', boot)
+                changed = True
+    out = {dev: {'in': c['in'], 'out': c['out'], 'since': since[dev][0], 'ts': since[dev][1]}
+           for dev, c in own_bytes(raw, parents).items()}
+    return {'ifaces': {i['key']: {'descr': i.get('descr'), 'device': i.get('device'), 'ipv6_off': i.get('ipv6_off'),
+                                  'gateway': i.get('gateway')} for i in det.get('interfaces') or []},
+            'bytes': out, 'default': (det.get('routes') or {}).get('inet', [])}
+
+
+def _catch_all(r):
+    """ the rule matches every IP packet on its interface and direction """
+    return all([
+        (r.get('proto') or 'ip') == 'ip',
+        (r.get('source') or 'any') == 'any',
+        (r.get('destination') or 'any') == 'any',
+        r.get('source_not') != '1',
+        r.get('destination_not') != '1',
+        (r.get('src_port') or 'any') == 'any',
+        (r.get('dst_port') or 'any') == 'any',
+        not r.get('iplen'),
+        not r.get('dscp'),
+        not r.get('interface2'),
+    ])
+
+
+def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now=None, sampler=None, ifview=None):
     """ :param wans: config keys of the internet-facing interfaces (lib.detect)
     :param reloaded: time of the last ipfw rule reload (rc.ipfw stamps it), which zeroes every
         rule counter; within RELOAD_GRACE a rule with 0 packets is "wait for traffic", not a warning
     :param prio_last: the last prio.py load/refresh result (or None), for S9
     :param prio_wanted: an enabled priority entry exists
+    :param ifview: interface_view(): bytes per interface, IPv6 state and policy routing, for S3
     :return: list of {id, title, level, items: [{level, text, why, example}]}
     """
     cfg, kern = snap['config'], snap['kernel']
@@ -99,8 +223,13 @@ def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now
         return 'a missing pipe or queue'
 
     def rname(r):
-        return 'rule %s on %s/%s%s' % (r.get('sequence', '?'), r.get('interface', '?'), r.get('direction') or 'both',
-                                       ' "%s"' % r['description'] if r.get('description') else '')
+        """ what Firewall: Shaper: Rules shows: description, Sequence, interface name, direction """
+        key = r.get('interface', '?')
+        where = '%s %s' % ((((ifview or {}).get('ifaces') or {}).get(key) or {}).get('descr') or key,
+                           r.get('direction') or 'both')
+        if r.get('description'):
+            return 'rule "%s" (sequence %s, %s)' % (r['description'], r.get('sequence', '?'), where)
+        return 'the rule with sequence %s (%s)' % (r.get('sequence', '?'), where)
 
     def running(p):
         """ scheduler the kernel runs for a pipe, else the configured one """
@@ -157,24 +286,127 @@ def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now
     if not out['S2']:
         add('S2', 'ok', 'Every enabled pipe and queue is loaded, and nothing else is.')
 
-    # S3
+    # S3: a rule with 0 packets is told apart by what its interface carried (ifview): no traffic,
+    # IPv6 rule on an IPv6-off interface, upload shaped by a sibling rule (ipfw sees a packet on the
+    # interface the routing table chose; pf's reply-to moves it afterwards: lab, 2026-11-23), or
+    # real traffic that no rule into that pipe caught
+    iv = ifview or {}
+    ifaces, ifbytes = iv.get('ifaces') or {}, iv.get('bytes') or {}
+
+    def pipe_of(r):
+        t = r.get('target')
+        return queue_by[t].get('pipe') if t in queue_by else t
+
+    def ifname(key, dev):
+        d = (ifaces.get(key) or {}).get('descr') or key
+        return '%s (%s)' % (d, dev) if dev and dev != d else d
+
+    def devof(r2):
+        m2 = VIA.search((krules.get(r2['uuid']) or {}).get('body', ''))
+        return m2.group(3) if m2 else (ifaces.get(r2.get('interface')) or {}).get('device')
+
     for r in erules:
         k = krules.get(r['uuid'])
+        loaded = 'Loaded as ipfw rule %s: %s' % (k['num'], k['body']) if k else ''
         if k is None:
-            add('S3', 'bad', '%s is enabled but has no loaded rule.' % rname(r),
+            add('S3', 'bad', '%s is enabled but has no loaded rule.' % cap(rname(r)),
                 'Its interface may be disabled, its target may be disabled, or Apply has not run.')
-        elif k['pkts'] == 0 and reloaded and 0 <= (now or time.time()) - reloaded < RELOAD_GRACE:
+            continue
+        if k['pkts'] > 0:
+            add('S3', 'ok', '%s: %s packets.' % (cap(rname(r)), format(k['pkts'], ',')))
+            continue
+        m = VIA.search(k['body'])
+        dev = m.group(3) if m else (ifaces.get(r.get('interface')) or {}).get('device')
+        kdir = (m.group(1) if m and m.group(1) else '') or r.get('direction') or ''
+        where = ifname(r.get('interface'), dev)
+        info = ifaces.get(r.get('interface')) or {}
+        if ipv6_only(r, k['body']) and info.get('ipv6_off'):
+            add('S3', 'info', 'Not applicable: %s matches only IPv6, and IPv6 is off on %s.' % (rname(r), where),
+                'The interface has no IPv6 address (FreeBSD marks it IFDISABLED), so no IPv6 packet can pass it; '
+                '0 packets is expected, not a fault.',
+                'Nothing needs fixing. If you switch IPv6 on for this link later, this rule starts to match. '
+                + loaded)
+            continue
+        if reloaded and 0 <= (now or time.time()) - reloaded < RELOAD_GRACE:
             add('S3', 'info', '%s: counters reset at %s (the firewall rules were reloaded); wait for traffic, '
-                'then check again.' % (rname(r), time.strftime('%H:%M:%S', time.localtime(reloaded))),
+                'then check again.' % (cap(rname(r)), time.strftime('%H:%M:%S', time.localtime(reloaded))),
                 'Every rule reload (an install, a shaper or firewall Apply, a reboot) sets the packet counters '
-                'to 0, so 0 packets right after it says nothing yet.', 'Loaded as: %s' % k['body'])
-        elif k['pkts'] == 0:
-            add('S3', 'warn', '%s has matched 0 packets since the last reload.' % rname(r),
+                'to 0, so 0 packets right after it says nothing yet.', loaded)
+            continue
+        cnt = ifbytes.get(dev) if dev else None
+        if cnt is None:
+            add('S3', 'warn', '%s has matched 0 packets since the last reload.' % cap(rname(r)),
                 'A rule that never matches shapes nothing: either no traffic goes that way, or its match '
-                'does not fit the packets as the firewall sees them (direction, addresses after NAT).',
-                'Loaded as: %s' % k['body'])
-        else:
-            add('S3', 'ok', '%s: %s packets.' % (rname(r), format(k['pkts'], ',')))
+                'does not fit the packets as the firewall sees them (direction, addresses after NAT). The '
+                'interface counters for %s could not be read, so this check cannot tell which.' % where, loaded)
+            continue
+        verb = {'out': 'sent', 'in': 'received'}.get(kdir, 'carried')
+        moved = cnt['out'] if kdir == 'out' else cnt['in'] if kdir == 'in' else cnt['out'] + cnt['in']
+        since = since_text(cnt)
+        if moved < QUIET_BYTES:
+            add('S3', 'info', 'No traffic this way since %s: %s %s %s, so %s had nothing to shape.'
+                % (since, where, verb, fmt_bytes(moved), rname(r)),
+                'An interface that %s (almost) nothing gives a rule nothing to match; a few kB are ARP, '
+                'DHCP or gateway monitoring, which the firewall sends itself. Example: a backup internet line '
+                'that only carries traffic when the main line fails.' % verb,
+                'Nothing needs fixing while the link is idle. ' + loaded)
+            continue
+        if not _catch_all(r):
+            # interface bytes cannot say whether packets of this narrower kind passed
+            add('S3', 'warn', '%s matched 0 packets since %s, while %s %s %s.' % (
+                cap(rname(r)), 'the last reload' if cnt.get('since') == 'reload' else since, where, verb,
+                fmt_bytes(moved)),
+                'The rule matches only part of the traffic (%s), so the interface bytes cannot tell whether '
+                'such packets passed. Either none did, or its match does not fit the packets as the firewall '
+                'sees them (direction, addresses after NAT).' % match_text(k['body']),
+                loaded)
+            continue
+
+        sib = []
+        if kdir == 'out':
+            # another interface's catch-all upload rule into the same pipe that did match
+            sib = [r2 for r2 in erules if r2 is not r and pipe_of(r2) == pipe_of(r) and _catch_all(r2)
+                   and (r2.get('direction') or '') == 'out' and devof(r2) != dev
+                   and (krules.get(r2['uuid']) or {}).get('pkts', 0) > 0]
+            sib.sort(key=lambda r2: (r2.get('target') != r.get('target'), -krules[r2['uuid']]['pkts']))
+        if sib:
+            s2 = sib[0]
+            k2 = krules[s2['uuid']]
+            dev2 = devof(s2)
+            default = dev2 in (iv.get('default') or [])
+            how = ifname(s2.get('interface'), dev2) + (', which holds the default route' if default else '')
+            if info.get('gateway'):
+                cause = ('replies to connections that came in on %s go back out through it (reply-to, which '
+                         'OPNsense adds to the rules of an interface with a gateway). Example: a server or port '
+                         'forward reached through the address of %s.' % (where, where))
+            else:
+                cause = ('%s has no gateway, so the likely cause is a firewall rule that moves outgoing '
+                         'traffic there (route-to or reply-to).' % where)
+            same = s2.get('target') == r.get('target')
+            add('S3', 'info', '%s matched 0 packets, but it is redundant: traffic leaving %s, %s %s since %s, is '
+                'shaped by %s instead, which feeds the same %s (%s packets). Nothing is unshaped.'
+                % (cap(rname(r)), where, fmt_bytes(moved), verb, since, rname(s2),
+                   tname(r.get('target')) if same else tname(pipe_of(r)), format(k2['pkts'], ',')),
+                'The shaper sees a packet on the interface the routing table chose, %s. Only after that does '
+                'the firewall move it to %s: %s' % (how, where, cause),
+                'Nothing needs fixing. Keep the rule (it costs nothing and starts to match if the default '
+                'route moves to this link) or delete it to tidy up. ' + loaded)
+            continue
+        add('S3', 'warn', '%s %s %s since %s, but %s matched 0 packets and no other upload rule into %s '
+            'matched either: this pipe shaped none of it, so unless another pipe caught it, it left unshaped.'
+            % (where, verb, fmt_bytes(moved), since, rname(r), tname(pipe_of(r)))
+            if kdir == 'out' else
+            '%s %s %s since %s, but %s matched 0 packets: that traffic was not shaped by this rule.'
+            % (where, verb, fmt_bytes(moved), since, rname(r)),
+            'The traffic is there but this rule does not catch it: its match does not fit the packets as the '
+            'shaper sees them (direction, addresses after NAT)%s.' % (
+                '; or the firewall moves them here (reply-to, policy routing) after the shaper saw them on the '
+                'interface the routing table chose, which has no rule into this pipe' if kdir == 'out' else '') + (
+                ' The interface bytes count from boot and the rule counters from the last reload, so part of '
+                'this traffic may be older than the rule counters.' if cnt.get('since') == 'boot' and reloaded else ''),
+            'Example: for replies that reply-to sends out here, add an upload rule into this pipe on the '
+            'interface that holds the route (often the default-route WAN). ' + loaded if kdir == 'out' else
+            'Compare the match with the traffic (Firewall: Diagnostics: States). ' + loaded)
 
     # S4
     keyf = ('direction', 'proto', 'source', 'source_not', 'src_port', 'destination', 'destination_not',
@@ -232,19 +464,7 @@ def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now
             add('S5', 'ok', '%s has a mirror rule for the other direction.' % tname(tgt))
 
     # S6: ipfw stops at the first matching pipe/queue rule; rules are emitted in sequence order
-    def catch_all(r):
-        return all([
-            (r.get('proto') or 'ip') == 'ip',
-            (r.get('source') or 'any') == 'any',
-            (r.get('destination') or 'any') == 'any',
-            r.get('source_not') != '1',
-            r.get('destination_not') != '1',
-            (r.get('src_port') or 'any') == 'any',
-            (r.get('dst_port') or 'any') == 'any',
-            not r.get('iplen'),
-            not r.get('dscp'),
-            not r.get('interface2'),
-        ])
+    catch_all = _catch_all
 
     def seq(r):
         try:
@@ -332,6 +552,20 @@ def run_checks(snap, wans, prio_last=None, prio_wanted=False, reloaded=None, now
         wd = sampler.get('watchdog') or {}
         extra = ' The watchdog restarted it %d time(s).' % wd['count'] if wd.get('count') else ''
         add('S10', 'ok', 'Recording every 10 s.' + extra)
+        over = (sampler.get('cost') or {}).get('hosts_over') or {}
+        if over:
+            add('S10', 'info', 'Every host is stored except on pipe %s: %s hosts is over the ceiling of 2,000, so that '
+                'pipe keeps its busiest 16 hosts and sums the rest.' % (', '.join(sorted(over)), ', '.join(
+                    '{:,}'.format(over[k]) for k in sorted(over))),
+                'The ring is in RAM (/var/run); the ceiling keeps it bounded.',
+                'Firewall: Shaper: Shaper Insight: sharing, "Recording settings".')
+        sug = sampler.get('assess') or {}
+        if (sampler.get('cost') or {}).get('hosts_mode') == 'every' and sug.get('suggest') == 'light':
+            add('S10', 'info', 'Full insight looks heavy for this firewall (%s); Light is suggested.' %
+                ', '.join(sug.get('decided') or []),
+                'Full stores every host for 6 h and reads them every 10 s; the suggestion compares this box with '
+                'measured limits and changes nothing by itself.',
+                'Firewall: Shaper: Shaper Insight: sharing, "Recording settings" shows the table and applies Light.')
     elif sampler.get('state') == 'restarting':
         add('S10', 'warn', 'The sampler process ended; daemon(8) starts it again within 30 s.',
             'While it is down, the pipe history has a gap.', 'If this stays, see the system log ("shaperinsight").')

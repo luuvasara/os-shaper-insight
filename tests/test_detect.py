@@ -103,6 +103,27 @@ class DetectTest(unittest.TestCase):
 
 
 
+class Ipv6StateTest(unittest.TestCase):
+    """ health S3 (2026.11.23a): IPv6 off = nd6 IFDISABLED (as on a VLAN WAN without IPv6) or no inet6 at all """
+
+    def test_ifdisabled_and_no_inet6(self):
+        from lib.detect import parse_ifconfig
+        ifc = parse_ifconfig(
+            "vlan0.102: flags=1008843<UP,BROADCAST,RUNNING> metric 0 mtu 1500\n"
+            "\tinet 10.97.0.2 netmask 0xffffff00 broadcast 10.97.0.255\n"
+            "\tnd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>\n"
+            "vlan0.101: flags=1008843<UP,BROADCAST,RUNNING> metric 0 mtu 1500\n"
+            "\tinet6 fe80::1%vlan0.101 prefixlen 64 scopeid 0x8\n"
+            "\tnd6 options=23<PERFORMNUD,ACCEPT_RTADV,AUTO_LINKLOCAL>\n")
+        self.assertTrue(ifc['vlan0.102']['ipv6_disabled'])
+        self.assertFalse(ifc['vlan0.101']['ipv6_disabled'])
+
+    def test_rows_carry_ipv6_off_and_gateway(self):
+        by = {i['key']: i for i in detect(ET.fromstring(CONFIG), IFCONFIG, NETSTAT)['interfaces']}
+        self.assertTrue(by['wan']['ipv6_off'])          # vlan0.101 above has no inet6 line
+        self.assertTrue(by['wan']['gateway'])           # WAN_DHCP
+
+
 class PublicTest(unittest.TestCase):
     def test_site_local_is_private(self):
         from lib.detect import _public

@@ -689,5 +689,287 @@ class SummaryWords(unittest.TestCase):
         self.assertNotIn('look', self.a.cake_ok_text(2, 0))
 
 
+
+class StoreEveryHost(unittest.TestCase):
+    """ general/store_all_hosts (1.0.j): every host per pipe in the ring, up to a ceiling """
+    def test_ring_keeps_every_host_up_to_the_ceiling(self):
+        full = {'1': {'hosts': [['h%d' % i, 100 - i] for i in range(40)], 'other': 0}}
+        top = sampler.ring_slots(full, 16, False)['1']
+        self.assertEqual(len(top['hosts']), 16)
+        self.assertEqual(top['other'], sum(100 - i for i in range(16, 40)))
+        every = sampler.ring_slots(full, 16, True)['1']
+        self.assertEqual(len(every['hosts']), 40)
+        self.assertEqual(every['other'], 0)
+        self.assertNotIn('over', every)
+
+    def test_over_the_ceiling_falls_back_and_says_so(self):
+        full = {'1': {'hosts': [['h%d' % i, 5] for i in range(30)], 'other': 0}}
+        with mock.patch.object(sampler, 'HOSTS_CEILING', 20):
+            r = sampler.ring_slots(full, 16, True)['1']
+        self.assertEqual(len(r['hosts']), 16)
+        self.assertEqual(r['over'], 30)
+        self.assertEqual(r['other'], 14 * 5)
+
+    def test_history_sends_every_host_only_when_asked(self):
+        recs = [{'t': 1010.0 + 10 * k, 'dt': 10.0, 'all': 1,
+                 'p': {'1': {'hosts': [['h%d' % i, 1000 * (i + 1)] for i in range(12)], 'other': 0}}} for k in range(3)]
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'hosts.jsonl')
+            with open(path, 'w') as f:
+                for r in recs:
+                    f.write(json.dumps(r, separators=(',', ':')) + '\n')
+            with mock.patch.object(sampler, 'HOSTS', path):
+                series, _, _ = sampler.host_series(1010, 10, 3, None, 8, every=True)
+                every = sampler.host_series.all
+                store = sampler.host_series.store
+                sampler.host_series(1010, 10, 3, None, 8, every=False)
+                self.assertEqual(sampler.host_series.all, {})
+        self.assertEqual(len(series['1']), 9)                 # 8 coloured + the rest
+        self.assertEqual(len(every['1']), 12)                 # every host, no summed rest
+        self.assertEqual(every['1'][0][0], 'h11')             # busiest first
+        self.assertEqual(every['1'][0][1], [12000 * 8 // 10] * 3)
+        self.assertTrue(store['1']['complete'])
+
+    def test_top_records_make_the_window_incomplete(self):
+        recs = [{'t': 1010.0, 'dt': 10.0, 'p': {'1': {'hosts': [['a', 10]], 'other': 5}}},
+                {'t': 1020.0, 'dt': 10.0, 'all': 1, 'p': {'1': {'hosts': [['a', 10]], 'other': 5, 'over': 2500}}}]
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'hosts.jsonl')
+            with open(path, 'w') as f:
+                for r in recs:
+                    f.write(json.dumps(r, separators=(',', ':')) + '\n')
+            with mock.patch.object(sampler, 'HOSTS', path):
+                sampler.host_series(1010, 10, 2, None, 8, every=True)
+        self.assertEqual(sampler.host_series.store['1'], {'complete': False, 'over': 2500})
+
+    def test_settings_default_on_and_interval(self):
+        root = mock.MagicMock()
+        g = mock.MagicMock()
+        root.find.return_value = g
+        vals = {}
+        g.findtext.side_effect = lambda k: vals.get(k)
+        with mock.patch.object(sampler, 'config_root', return_value=root):
+            self.assertEqual(sampler.general_settings(), {'store_all': True, 'every': 1})   # an upgraded config
+            vals.update(store_all_hosts='0', hosts_interval='30')
+            self.assertEqual(sampler.general_settings(), {'store_all': False, 'every': 3})
+            vals.update(hosts_interval='45')                                                  # not an option
+            self.assertEqual(sampler.general_settings()['every'], 1)
+
+
+class InsightLevel(unittest.TestCase):
+    """ the Full/Light suggestion: cheap reads, thresholds in one place, never applied by itself """
+    def facts(self, ncpu, free_pages, hosts, states, cpu_ms):
+        sysctl = {'hw.ncpu': str(ncpu), 'hw.model': 'Test CPU', 'hw.physmem': str(8 << 30), 'hw.pagesize': '4096',
+                  'vm.stats.vm.v_free_count': str(free_pages), 'vm.stats.vm.v_inactive_count': '0'}
+        # 1.0.k newest rows: [host, sent, offered(, {method: bytes})]
+        newest = {'p': {'1': [['h%d' % i, 1, 1] for i in range(hosts)], 'na-up': [['x', 1, 1]]}}
+        meta = {'cost': {'states': states, 'cpu_ms_per_sample': cpu_ms, 'hosts_base_s': 10, 'hosts_mode': 'every'}}
+        return sysctl, newest, meta
+
+    def run_assess(self, *a):
+        sysctl, newest, meta = self.facts(*a)
+        with tempfile.TemporaryDirectory() as d:
+            mp = os.path.join(d, 'meta.json')
+            with open(mp, 'w') as f:
+                json.dump(meta, f)
+            with mock.patch.object(sampler, 'sysctl_values', return_value=sysctl), \
+                    mock.patch.object(sampler, 'read_newest', return_value=newest), mock.patch.object(sampler, 'META', mp):
+                return sampler.assess()
+
+    def test_small_box_full(self):
+        r = self.run_assess(4, 1 << 19, 40, 800, 12.0)          # 2 GB available
+        self.assertEqual(r['suggest'], 'full')
+        self.assertEqual(r['decided'], [])
+        self.assertEqual({x['key'] for x in r['rows']}, set(sampler.ASSESS_LIMITS))
+
+    def test_many_hosts_on_two_cores_light_with_reasons(self):
+        r = self.run_assess(2, 1 << 17, 4800, 30000, 40.0)       # 512 MB available
+        self.assertEqual(r['suggest'], 'light')
+        self.assertIn('hosts', r['decided'])
+        self.assertIn('pf_states', r['decided'])
+        ring = next(x for x in r['rows'] if x['key'] == 'ring_mb')
+        # 4,800 hosts: the ring is estimated at the ceiling, 2,000 hosts x 24 B x 2,160 lines
+        self.assertAlmostEqual(ring['value'], 2000 * sampler.RING_BYTES_PER_HOST * sampler.HOSTS_KEEP / 1e6, places=0)
+
+    def test_levels_are_the_documented_presets(self):
+        self.assertEqual(sampler.LEVELS['full'], {'store_all_hosts': '1', 'hosts_interval': '10', 'poll_seconds': '10'})
+        self.assertEqual(sampler.LEVELS['light']['store_all_hosts'], '0')
+
+
+# the two states of each connection as the lab VM printed them:
+# an IPv4 NAT download, IPv6 without NAT (two states, not one floating state), a port forward, the
+# firewall's own download (one state), and a NAT state whose LAN-side twin is missing
+PAIRS = """all tcp 203.0.113.5:443 <- 192.168.50.9:49110       ESTABLISHED:ESTABLISHED
+   age 00:00:01, expires in 23:59:58, 1:1 pkts, %(lan9)s bytes, rule 12
+all tcp 198.51.100.2:61000 (192.168.50.9:49110) -> 203.0.113.5:443       ESTABLISHED:ESTABLISHED
+   age 00:00:01, expires in 23:59:58, 1:1 pkts, %(wan9)s bytes, rule 80
+all tcp 2001:db8:ffff::1[443] <- 2001:db8:1::20[51820]       ESTABLISHED:ESTABLISHED
+   age 00:00:01, expires in 23:59:58, 1:1 pkts, %(lan6)s bytes, rule 82
+all tcp 2001:db8:1::20[51820] -> 2001:db8:ffff::1[443]       ESTABLISHED:ESTABLISHED
+   age 00:00:01, expires in 23:59:58, 1:1 pkts, %(wan6)s bytes, rule 76
+all tcp 192.168.50.20:5424 (198.51.100.2:5524) <- 203.0.113.77:40000       ESTABLISHED:ESTABLISHED
+   age 00:00:01, expires in 23:59:58, 1:1 pkts, %(wanpf)s bytes, rule 1
+all tcp 203.0.113.77:40000 -> 192.168.50.20:5424       ESTABLISHED:ESTABLISHED
+   age 00:00:01, expires in 23:59:58, 1:1 pkts, %(lanpf)s bytes, rule 76
+all tcp 198.51.100.2:8272 -> 203.0.113.9:5399       ESTABLISHED:ESTABLISHED
+   age 00:00:01, expires in 23:59:58, 1:1 pkts, %(fw)s bytes, rule 76
+all tcp 198.51.100.2:61005 (192.168.50.11:50001) -> 203.0.113.5:443       ESTABLISHED:ESTABLISHED
+   age 00:00:01, expires in 23:59:58, 1:1 pkts, %(wan11)s bytes, rule 80
+"""
+
+
+def pairs(**kw):
+    v = {'lan9': '0:0', 'wan9': '0:0', 'lan6': '0:0', 'wan6': '0:0', 'wanpf': '0:0', 'lanpf': '0:0', 'fw': '0:0',
+         'wan11': '0:0'}
+    v.update(kw)
+    return PAIRS % v
+
+
+class PairedCounting(unittest.TestCase):
+    """ 1.0.k: download per host from the LAN-side state (after CAKE), paired with its WAN-side state """
+
+    def test_classify_both_sides(self):
+        t = topo()
+        got = [traffic.classify(s, t) for s in traffic.parse_states(pairs(lan9='10:900', wan9='10:1000'))]
+        self.assertEqual(got[0][:4], ('lan', '192.168.50.9', 10, 900))
+        self.assertEqual(got[1][:5], ('wan', '192.168.50.9', 'igb0', 10, 1000))
+        self.assertEqual(got[0][4], got[1][5])                     # one pair key
+        self.assertEqual(got[2][0], 'lan')                         # IPv6: the LAN state is "remote <- host"
+        self.assertEqual(got[3][:3], ('wan', '2001:db8:1::20', 'igb0'))
+        self.assertEqual(got[2][4], got[3][5])
+        self.assertEqual(got[4][:2], ('wan', '192.168.50.20'))     # port forward: inbound on the WAN side...
+        self.assertEqual(got[5][0], 'lan')                         # ...outbound on the LAN side, "->"
+        self.assertEqual(got[4][5], got[5][4])
+        self.assertEqual(got[6][1], traffic.FIREWALL)
+        self.assertIsNone(got[6][5])                               # no LAN-side twin to pair with
+        # attribute() (the WAN view) is unchanged: the LAN-side states are not counted twice
+        self.assertEqual([traffic.attribute(s, t) is None for s in traffic.parse_states(pairs())],
+                         [True, False, True, False, False, True, False, False])
+
+    def test_port_forward_lan_side_counts_b0_as_download(self):
+        st = traffic.parse_states(pairs(lanpf='9000:400'))[5]
+        self.assertEqual(traffic.classify(st, topo())[2:4], (400, 9000))
+
+    def test_exact_download_between_reads(self):
+        t = topo()
+        hc = traffic.HostCounter()
+        hc.update(traffic.parse_states(pairs()), t, 10)
+        # the WAN side counted the download before CAKE (1000, 800, 500), the LAN side after (900, 700, 450)
+        d = hc.update(traffic.parse_states(pairs(lan9='10:900', wan9='10:1000', lan6='5:700', wan6='5:800',
+                                                 wanpf='500:5', lanpf='450:5', fw='1:300', wan11='1:200')), t, 10)
+        down = d[('igb0', 'down')]
+        self.assertEqual(down, {'192.168.50.9': 1000, '2001:db8:1::20': 800, '192.168.50.20': 500,
+                                traffic.FIREWALL: 300, '192.168.50.11': 200})
+        self.assertEqual(hc.exact[('igb0', 'down')], {'192.168.50.9': [900, 1000], '2001:db8:1::20': [700, 800],
+                                                      '192.168.50.20': [450, 500]})
+        # the firewall's own and the unpaired host keep their WAN count: no exact part
+        self.assertNotIn(traffic.FIREWALL, hc.exact[('igb0', 'down')])
+        self.assertNotIn('192.168.50.11', hc.exact[('igb0', 'down')])
+        p = traffic.by_pipe(d, traffic.pipe_map(CFG), 3, hc.exact)['10000']
+        # ranked by the best count: .9 900, ::20 700, .20 450 | fw 300 and .11 200 summed
+        self.assertEqual(p['hosts'][0], ['192.168.50.9', 1000, 900, 1000])
+        self.assertEqual([e[0] for e in p['hosts']], ['192.168.50.9', '2001:db8:1::20', '192.168.50.20'])
+        self.assertEqual(p['other'], 500)
+        self.assertNotIn('other_x', p)
+
+    def test_lone_ipv6_wan_state_still_counted(self):
+        # if a connection had only its WAN-side state, it is counted as before (and estimated, not exact)
+        t = topo()
+        hc = traffic.HostCounter()
+        text = pairs().split('all tcp 2001:db8:1::20[51820] ->')[1]
+        text = 'all tcp 2001:db8:1::20[51820] ->' + text.split('all tcp 192.168.50.20')[0]
+        hc.update(traffic.parse_states(text), t, 10)
+        d = hc.update(traffic.parse_states(text.replace('0:0 bytes', '5:800 bytes')), t, 10)
+        self.assertEqual(d[('igb0', 'down')], {'2001:db8:1::20': 800})
+        self.assertEqual(hc.exact, {})
+
+    def test_ring_keeps_exact_parts_of_the_rest(self):
+        full = {'1': {'hosts': [['a', 10, 8, 10], ['b', 5], ['c', 4, 3, 4]], 'other': 0}}
+        self.assertEqual(sampler.ring_slots(full, 1), {'1': {'hosts': [['a', 10, 8, 10]], 'other': 9,
+                                                             'other_x': [3, 4]}})
+
+    def test_series_use_exact_download_not_the_scaled_wan_count(self):
+        # c-down shape: the UDP host has no LAN-side count (as if unpaired), three TCP hosts are exact
+        mb = 1e6 / 8 * 10
+        rec = {'t': 1010.0, 'dt': 10.0, 'p': {'10000': {
+            'hosts': [['u', 61 * mb], ['a', 9.9 * mb, 9.0 * mb, 9.9 * mb], ['b', 9.9 * mb, 9.0 * mb, 9.9 * mb],
+                      ['c', 9.9 * mb, 9.0 * mb, 9.9 * mb]], 'other': 0, 'delivered': 36 * mb, 'tins': [36 * mb]}}}
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'hosts.jsonl')
+            with open(path, 'w') as f:
+                f.write(json.dumps(rec) + '\n')
+            with mock.patch.object(sampler, 'HOSTS', path):
+                series, _, offered = sampler.host_series(1010, 10, 1)
+                methods = sampler.host_series.methods
+        got = {h: v[0] / 1e6 for h, v in series['10000']}
+        self.assertAlmostEqual(got['a'], 9.0, places=2)
+        self.assertAlmostEqual(got['u'], 9.0, places=2)             # 1.0.j said 25.0 (scaled by 0.41)
+        self.assertAlmostEqual(offered['10000'][0] / 1e6, 90.7, places=1)
+        self.assertEqual(methods['10000']['a'], {'exact': 1.0})
+        self.assertEqual(methods['10000']['u'], {'fair': 1.0})
+        self.assertAlmostEqual(methods['10000']['*']['exact'], 0.75, places=2)
+
+    def test_upload_pipe_counts_are_exact_download_checked(self):
+        recs = {'t': 1010.0, 'dt': 10.0, 'p': {'10001': {'hosts': [['a', 1000]], 'other': 0, 'delivered': 1000,
+                                                         'tins': [1000], 'after': 1},
+                                               '10000': {'hosts': [['a', 1000]], 'other': 0, 'delivered': 1000,
+                                                         'tins': [1000]}}}
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'hosts.jsonl')
+            with open(path, 'w') as f:
+                f.write(json.dumps(recs) + '\n')
+            with mock.patch.object(sampler, 'HOSTS', path):
+                sampler.host_series(1010, 10, 1)
+                methods = sampler.host_series.methods
+        self.assertEqual(methods['10001']['a'], {'exact': 1.0})
+        self.assertEqual(methods['10000']['a'], {'checked': 1.0})
+
+    def test_newest_rows_carry_sent_offered_and_method(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(sampler, 'NEWEST', os.path.join(d, 'newest.json')):
+                rows = sampler.newest_rows({'hosts': [['a', 300, 240, 300], ['fw', 100]], 'other': 0},
+                                           {'delivered': 280, 'tins': [280]})
+                sampler.write_newest({'t': 100.0, 'dt': 10.0, 'v': 2, 'p': {'1': rows}})
+                r = sampler.newest('1')
+        self.assertEqual(rows, [['a', 240, 300], ['fw', 40, 100, {'fair': 40}]])
+        self.assertTrue(r['corrected'])
+        self.assertEqual(r['hosts'], [['a', 192, 240, {}], ['fw', 32, 80, {'fair': 1.0}]])
+
+    def test_old_newest_file_is_not_corrected(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(sampler, 'NEWEST', os.path.join(d, 'newest.json')):
+                sampler.write_newest({'t': 100.0, 'dt': 10.0, 'p': {'1': [['a', 100]]}})
+                r = sampler.newest('1')
+        self.assertFalse(r['corrected'])
+        self.assertEqual(r['hosts'], [['a', 80]])
+
+    def test_record_tins(self):
+        self.assertEqual(sampler.record_tins({'delivered': 5, 'tins': [[3, 0, 0, 0], [2, 0, 0, 0]]}, {}), [3, 2])
+        self.assertEqual(sampler.record_tins({'delivered': 5}, {'tinx': [[0, 0, 0, 0]]}), [5])
+        self.assertIsNone(sampler.record_tins({'delivered': 5}, {'rule_bytes': True}))
+
+    def test_tin_of_from_priority_tables(self):
+        self.assertEqual(sampler.tin_of([['a', 1], ['b', 2, 1, 2]], ['Best Effort', 'Bulk', 'Video', 'Voice'],
+                                        {'Bulk': {'b'}, 'Video': {'z'}}), {'b': 1})
+        self.assertEqual(sampler.tin_of([['b', 2]], ['Best Effort'], {'Bulk': {'b'}}), {})
+
+    def test_prio_hosts_skips_classes_with_port_targets(self):
+        xml = ('<opnsense><OPNsense><ShaperInsight><priorities>'
+               '<priority><enabled>1</enabled><class>background</class><target>192.168.50.9</target></priority>'
+               '<priority><enabled>1</enabled><class>interactive</class><target>udp/3478-3481</target></priority>'
+               '<priority><enabled>1</enabled><class>interactive</class><target>192.168.50.7</target></priority>'
+               '</priorities></ShaperInsight></OPNsense></opnsense>')
+        lists = {'si_prio_background': '192.168.50.9/32 0\n192.168.60.0/24 0\n',
+                 'si_prio_interactive': '192.168.50.7/32 0\n'}
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, 'config.xml')
+            with open(cfg, 'w') as f:
+                f.write(xml)
+            with mock.patch.object(sampler, 'CONFIG', cfg), \
+                    mock.patch.object(prio, 'run', side_effect=lambda argv, timeout=10: (0, lists[argv[2]], '')):
+                got = sampler.prio_hosts()
+        self.assertEqual(got, {'Bulk': {'192.168.50.9'}})
+
+
 if __name__ == '__main__':
     unittest.main()

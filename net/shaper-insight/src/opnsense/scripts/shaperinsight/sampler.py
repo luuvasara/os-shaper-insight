@@ -29,7 +29,9 @@
 
       sampler.py start|stop|restart|status
       sampler.py run                  the loop itself (started by `start` through daemon(8))
-      sampler.py history SECONDS      JSON for the sharing page: pipes from the RRDs, hosts from the ring
+      sampler.py history SECONDS [SINCE [ALL]]   JSON for the sharing page: pipes from the RRDs, hosts
+                                      from the ring (ALL=1: every stored host's series as well)
+      sampler.py assess               cheap facts about this box and a suggested insight level
       sampler.py once                 one sample printed as JSON (tests, cost measurement)
 
     Pipe rates, CAKE drops/marks/delay/backlog per pipe and per tin go into RRD files next to
@@ -37,9 +39,10 @@
     size: 10 s for 6 h, 1 min for 3 days, 10 min for 30 days, 1 h for a year. They survive
     reboots and Reporting: Health lists them under "shaper".
     Hosts are not in the RRDs: an RRD has a fixed set of data sources, and the busiest hosts
-    change from minute to minute; a slot "host 1" would mean another device each hour. The top
-    16 hosts per pipe are kept for 6 h (10 s steps) in /var/run/shaperinsight/hosts.jsonl,
-    which a reboot clears.
+    change from minute to minute; a slot "host 1" would mean another device each hour. Hosts
+    are kept for 6 h (10 s steps) in /var/run/shaperinsight/hosts.jsonl, which a reboot clears:
+    every host of each pipe while general/store_all_hosts is on (up to HOSTS_CEILING a pipe,
+    beyond that the busiest 16 and the rest summed), else the busiest 16 and the rest summed.
     Counters are DERIVE data sources with the time of each read, so a rate is (bytes now -
     bytes before) / (time of this read - time of that read): no point can be inflated by a
     stamp taken early (TESTING.md speed-test analysis the "900 on an 840 pipe").
@@ -55,6 +58,7 @@ from lib import run, CACHE_DIR, CONFIG, IPFW, SYSCTL, CAKE_STATS, SHAPER_FIRST_R
     parse_cake_stats, parse_ipfw, read_config, cache_dir, config_root
 from lib.traffic import iter_states, parse_states, parse_ifconfig, pipe_map, Topology, HostCounter, by_pipe, \
     payload_cap, cake_overheads
+from lib.fairshare import estimate
 
 STEP = 10
 RRD_DIR = '/var/db/rrd'
@@ -67,6 +71,9 @@ HOSTS = os.path.join(CACHE_DIR, 'hosts.jsonl')
 META = os.path.join(CACHE_DIR, 'sampler.json')
 HOSTS_KEEP = 6 * 3600 // STEP                           # 2160 lines: 6 h at 10 s
 TOP = 16                        # hosts kept per pipe and sample in the ring (the rest summed as "other")
+HOSTS_CEILING = 2000            # store_all_hosts: every host up to this many a pipe, else back to TOP (1.0.j;
+                                # host simulation: 1.59 MB of series an hour at 1,000 hosts)
+HOST_INTERVALS = (10, 30, 60)   # general/hosts_interval: seconds between per-host (pf) reads
 HOSTS_SHOWN = 8                 # default and maximum of general/hosts_shown: coloured series (host simulation: max 8)
 NEWEST = os.path.join(CACHE_DIR, 'newest.json')
 NEWEST_CAP = 5000               # hosts per pipe in the newest step (the table's list, search and paging)
@@ -368,10 +375,102 @@ def pipes_meta(cfg, pmap, counters):
     return out
 
 
-def ring_slots(full, top=TOP):
-    """ the ring keeps the TOP busiest hosts of each pipe and the sum of the rest """
-    return {k: {'hosts': v['hosts'][:top], 'other': v['other'] + sum(x for _, x in v['hosts'][top:])}
-            for k, v in full.items()}
+def ring_slots(full, top=TOP, every=False):
+    """ the ring keeps the TOP busiest hosts of each pipe and the sum of the rest; with every
+    (store_all_hosts) every host, unless a pipe has more than HOSTS_CEILING: then that pipe falls back
+    to TOP + the rest and says how many it had ('over') """
+    out = {}
+    for k, v in full.items():
+        hs = v['hosts']
+        if every and len(hs) <= HOSTS_CEILING and not v['other']:
+            out[k] = {'hosts': hs, 'other': 0}
+        else:
+            out[k] = {'hosts': hs[:top], 'other': v['other'] + sum(e[1] for e in hs[top:])}
+            # the exact parts (LAN-side counts) of the summed rest: [after CAKE, the pf bytes they replace]
+            xs = [e for e in hs[top:] if len(e) >= 4]
+            ox = v.get('other_x') or [0, 0]
+            if xs or v.get('other_x'):
+                out[k]['other_x'] = [ox[0] + sum(e[2] for e in xs), ox[1] + sum(e[3] for e in xs)]
+            if every:
+                out[k]['over'] = len(hs)
+    return out
+
+
+def prio_hosts():
+    """ the addresses prio.py put in its tables, per CAKE tin name ({'Bulk': {addr}, 'Video': {addr}}),
+    for the per-tin estimate of what has no LAN-side count (lib/fairshare.estimate). A class that also
+    has port targets marks traffic of every host, so its tin cannot be tied to hosts: that class is left
+    out. Only single addresses are used. """
+    import xml.etree.ElementTree as ET
+    import prio
+    out, ported = {}, set()
+    try:
+        for p in config_root(CONFIG).findall('./OPNsense/ShaperInsight/priorities/priority'):
+            if p.findtext('enabled') == '1' and prio.port_spec((p.findtext('target') or '').strip()):
+                ported.add(p.findtext('class'))
+    except (OSError, ET.ParseError):
+        return out
+    for cls, (_, table, _, tin, _) in prio.CLASSES.items():
+        if cls in ported:
+            continue
+        for net in prio.table_list(table) or ():
+            n = net.split('/')
+            if (n[1] == '32' and '.' in n[0]) or n[1] == '128':
+                out.setdefault(tin, set()).add(n[0])
+    return out
+
+
+def tin_of(hosts, names, prio):
+    """ {host: tin index} for the hosts of one record whose tin is known on this pipe (names: the
+    pipe's tin names in CAKE's order) """
+    out = {}
+    for tin, addrs in prio.items():
+        if tin in names:
+            k = names.index(tin)
+            for e in hosts:
+                if e[0] in addrs:
+                    out[e[0]] = k
+    return out
+
+
+def record_tins(d, counter):
+    """ the pipe's per-tin bytes for one interval: CAKE's own tins, [delivered] for a single-tin
+    (besteffort) CAKE pipe, None when unknown """
+    if d.get('tins'):
+        return [t[0] for t in d['tins']]
+    if len(counter.get('tinx', [])) == 1:
+        return [d['delivered']]
+    return None
+
+
+def entries_of(slot):
+    """ a ring/newest slot -> {host: (pf bytes, after CAKE, replaced)}; '' is the summed rest """
+    out = {}
+    for e in slot.get('hosts', []):
+        out[e[0]] = (e[1], e[2], e[3]) if len(e) >= 4 else (e[1], 0, 0)
+    if slot.get('other') or slot.get('other_x'):
+        x = slot.get('other_x') or [0, 0]
+        out[''] = (slot.get('other', 0), x[0], x[1])
+    return out
+
+
+def general_settings():
+    """ the sampler's own settings: store_all_hosts (default on) and hosts_interval (s, default 10) """
+    import xml.etree.ElementTree as ET
+    out = {'store_all': True, 'every': 1}
+    try:
+        g = config_root(CONFIG).find('./OPNsense/ShaperInsight/general')
+    except (OSError, ET.ParseError):
+        return out
+    if g is None:
+        return out
+    out['store_all'] = (g.findtext('store_all_hosts') or '1') != '0'
+    try:
+        sec = int(g.findtext('hosts_interval') or 10)
+    except ValueError:
+        sec = 10
+    out['every'] = max(1, min(6, (sec if sec in HOST_INTERVALS else 10) // STEP))
+    return out
 
 
 def write_newest(record):
@@ -382,6 +481,22 @@ def write_newest(record):
     with os.fdopen(fd, 'w') as f:
         json.dump(record, f, separators=(',', ':'))
     os.rename(tmp, NEWEST)
+
+
+def newest_rows(full_slot, rec_slot):
+    """ the newest step's hosts of one pipe as [host, bytes sent, bytes pf counted, {method: bytes}]
+    (lib/fairshare.estimate; methods other than 'exact' only). The summed rest of the full list is
+    empty (NEWEST_CAP), so every host is estimated on its own """
+    ent = entries_of(full_slot)
+    got, how = estimate(ent, rec_slot.get('delivered'), rec_slot.get('tins'), rec_slot.get('tin_of'),
+                        after=bool(rec_slot.get('after')))
+    rows = []
+    for h, (off, _, _) in ent.items():
+        if h:
+            m = {k: round(v) for k, v in how[h].items() if k != 'exact' and v}
+            rows.append([h, round(got[h]), off, m] if m else [h, round(got[h]), off])
+    rows.sort(key=lambda r: (-r[1], r[0]))
+    return rows
 
 
 def read_newest():
@@ -400,8 +515,18 @@ def newest(pipe, q='', sort='rate', offset=0, limit=50):
     if d is None:
         return {'status': 'ok', 'hosts': [], 'total': 0, 'sending': 0, 't': None}
     dt = d.get('dt') or STEP
-    rows = [[h, round(v * 8 / dt)] for h, v in (d['p'].get(str(pipe)) or []) if h]
-    sending = sum(1 for _, v in rows if v > 0)
+    # v2 rows (1.0.k): [host, bytes sent, bytes pf counted, {method: bytes}] -> [host, bit/s, pf bit/s,
+    # {method: share}]; older rows [host, bytes pf counted] stay as they were (corrected false)
+    rows = []
+    for e in d['p'].get(str(pipe)) or []:
+        if not e or not e[0]:
+            continue
+        r = [e[0], round(e[1] * 8 / dt)]
+        if len(e) >= 3:
+            r.append(round(e[2] * 8 / dt))
+            r.append({k: round(v / e[1], 3) for k, v in (e[3] if len(e) >= 4 else {}).items()} if e[1] else {})
+        rows.append(r)
+    sending = sum(1 for r in rows if r[1] > 0)
     q = (q or '').strip().lower()
     if q:
         rows = [x for x in rows if q in x[0].lower()]
@@ -420,6 +545,7 @@ def newest(pipe, q='', sort='rate', offset=0, limit=50):
     offset = max(0, int(offset))
     limit = max(1, min(PAGE_MAX, int(limit)))
     return {'status': 'ok', 't': d.get('t'), 'dt': dt, 'total': len(rows), 'sending': sending,
+            'corrected': d.get('v') == 2,
             'offset': offset, 'limit': limit, 'hosts': rows[offset:offset + limit]}
 
 
@@ -522,7 +648,9 @@ def sample_loop(rrd, hosts):
     pkg = package_id()
     caps = load_caps()
     quiet, pf_quiet = Quiet(), Quiet()
-    pf = {'ts': None, 'pipes': None, 'every': 1, 'skip': '', 'states': 0, 'read_s': 0.0, 'parse_ms': 0.0}
+    pf = {'ts': None, 'pipes': None, 'every': 1, 'skip': '', 'states': 0, 'read_s': 0.0, 'parse_ms': 0.0,
+          'base': 1, 'all': True, 'over': {}}
+    prio = {}
     last_pipes = None
     while True:
         tick0 = time.monotonic()
@@ -546,6 +674,10 @@ def sample_loop(rrd, hosts):
                         break
                 cfg, cfg_mtime = read_config(), mtime
                 pmap, topo = topology(cfg)
+                gs = general_settings()
+                pf['all'], pf['base'] = gs['store_all'], gs['every']
+                pf['every'] = max(pf['every'], pf['base'])
+                prio = prio_hosts()
                 refreshed = time.time()
             # 1. the pipes: every step, stamped on their own
             ts, read_s, cake, rules = read_pipes()
@@ -577,17 +709,34 @@ def sample_loop(rrd, hosts):
                     pf['states'] = hosts.count
                     pf['parse_ms'] = (time.process_time() - p0) * 1000
                     # adaptive: a costly parse runs less often (at most every 6th step, 60 s)
-                    pf['every'] = max(1, min(6, int(pf['parse_ms'] // PF_BUDGET_MS) + 1))
+                    pf['every'] = max(pf['base'], min(6, int(pf['parse_ms'] // PF_BUDGET_MS) + 1))
                     if pf['ts'] is not None and pf['pipes'] is not None:
-                        full = by_pipe(deltas, pmap, NEWEST_CAP)
-                        rec = {'t': round(pts, 3), 'dt': round(pts - pf['ts'], 3), 'p': ring_slots(full)}
-                        write_newest({'t': rec['t'], 'dt': rec['dt'], 'p': {k: v['hosts'] for k, v in full.items()}})
+                        full = by_pipe(deltas, pmap, NEWEST_CAP, hosts.exact)
+                        rec = {'t': round(pts, 3), 'dt': round(pts - pf['ts'], 3),
+                               'p': ring_slots(full, TOP, pf['all'])}
+                        if pf['all']:
+                            rec['all'] = 1
+                        pf['over'] = {k: v['over'] for k, v in rec['p'].items() if 'over' in v}
+                        pd = pipe_deltas(counters, pf['pipes'])
+                        up_pipes = {p for (_, d_), p in pmap.items() if d_ == 'up'}
+                        for n, d in pd.items():
+                            if n not in rec['p']:
+                                rec['p'][n] = {'hosts': [], 'other': 0}
+                            slot = rec['p'][n]
+                            slot['delivered'] = d['delivered']
+                            if n in up_pipes:
+                                slot['after'] = 1       # upload: the WAN-side state counts after CAKE
+                            # per-tin bytes and the hosts whose tin is known: the estimate of what has
+                            # no LAN-side count (lib/fairshare.estimate)
+                            tins = record_tins(d, counters.get(n, {}))
+                            if tins is not None:
+                                slot['tins'] = tins
+                                known = tin_of(full.get(n, {}).get('hosts', []), counters[n].get('names', []), prio)
+                                if known:
+                                    slot['tin_of'] = known
+                        write_newest({'t': rec['t'], 'dt': rec['dt'], 'v': 2,
+                                      'p': {k: newest_rows(v, rec['p'].get(k, {})) for k, v in full.items()}})
                         del full
-                        for n, d in pipe_deltas(counters, pf['pipes']).items():
-                            if n in rec['p']:
-                                rec['p'][n]['delivered'] = d['delivered']
-                            else:
-                                rec['p'][n] = {'hosts': [], 'other': 0, 'delivered': d['delivered']}
                         append_hosts(rec)
                     pf['ts'], pf['pipes'] = pts, counters
             # 3. the tins' latest step (for "Bulk is yielding"), every step
@@ -641,6 +790,8 @@ def write_meta(started, pipes, cpu, read_s, pf, rrd, tick_s, rss=None, tin_now=N
                      'states': pf['states'], 'pf_read_ms': round(pf['read_s'] * 1000, 1),
                      'pf_parse_ms': round(pf['parse_ms'], 1), 'hosts_every_s': pf['every'] * STEP,
                      'hosts_paused': pf['skip'], 'state_cap': STATE_CAP,
+                     'hosts_mode': 'every' if pf.get('all') else 'top', 'hosts_over': pf.get('over') or {},
+                     'hosts_ceiling': HOSTS_CEILING, 'hosts_base_s': pf.get('base', 1) * STEP,
                      'rss_kb': rss or resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                      'rss_peak_kb': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                      'rrdtool_cpu_s': round(rrd.cpu_seconds(), 2), 'rrd_bytes': size, 'ring_bytes': ring,
@@ -703,16 +854,22 @@ def fetch(path, cf, start, end, step, factor):
     return {'start': rows[0][0], 'step': real, 'series': series}
 
 
-def host_series(row0, step, n, weights=None, shown=HOSTS_SHOWN):
+def host_series(row0, step, n, weights=None, shown=HOSTS_SHOWN, every=False):
     """ per pipe: the top 6 hosts over the rows (+ the rest as ''), bit/s per row, and the hosts'
     unscaled sum per row ("offered").
     - Rows as the RRD gives them: row k is stamped row0 + k * step and covers the step before it. A
       record of about one step goes to the row that holds the middle of its interval; a longer one
       (the adaptive interval) is spread over the rows it covers, in proportion to the pipe's own bytes
       in those rows (weights: bit/s per row per pipe) when known, else by time.
-    - pf counts a host's bytes before dummynet drops them, so under drops the hosts add up to more
-      than the pipe sent (review N9: 107 % at 362 drops/s). Each record's hosts are scaled down to
-      the pipe's delivered bytes when they exceed them; "offered" keeps what pf counted.
+    - Per host, what the pipe sent (lib/fairshare.estimate, 1.0.k): download as the LAN-side state
+      counted it (after CAKE) where the connection has one, upload as the WAN-side state counted it
+      (also after CAKE); the rest (the firewall's own traffic, unpaired states) is estimated by fair
+      share inside the host's CAKE tin, or scaled when the tins are unknown. "offered" keeps what the
+      WAN-side states counted (download before CAKE: under drops more than the pipe sent, review N9).
+      host_series.methods: per pipe, {host: {method: share of its bytes}} for the shown hosts and '',
+      and '*' for the whole pipe.
+    - every: also every stored host's series (host_series.all, busiest first, the summed rest as '');
+      host_series.store says per pipe whether every record in the window held every host.
     :return: (series per pipe, first record time, offered per pipe) """
     try:
         with open(HOSTS) as f:
@@ -722,8 +879,16 @@ def host_series(row0, step, n, weights=None, shown=HOSTS_SHOWN):
     import math
     start = row0 - step
     first = None
-    buckets, offered, grouped = {}, {}, {}
+    buckets, offered, grouped, mbytes = {}, {}, {}, {}
+    store = {}
     for line in lines:
+        # the ring is time-ordered and each line starts {"t":<stamp>,: skip old lines before parsing them
+        # (with every host stored a line is up to ~50 kB)
+        try:
+            if float(line[5:line.index(',', 5)]) + 3600 < start:
+                continue
+        except ValueError:
+            pass
         try:
             rec = json.loads(line)
             t, dt = float(rec['t']), max(0.001, float(rec['dt']))
@@ -745,6 +910,10 @@ def host_series(row0, step, n, weights=None, shown=HOSTS_SHOWN):
         if not spans:
             continue
         for pipe, slot in rec['p'].items():
+            sv = store.setdefault(pipe, {'complete': True, 'over': 0})
+            if not rec.get('all') or 'over' in slot:
+                sv['complete'] = False
+                sv['over'] = max(sv['over'], slot.get('over', 0))
             sp = spans
             w = (weights or {}).get(pipe)
             if w and len(spans) > 1:
@@ -752,22 +921,31 @@ def host_series(row0, step, n, weights=None, shown=HOSTS_SHOWN):
                 tot = sum(x for _, x in ws)
                 if tot > 0:
                     sp = [(b, x / tot * sum(f for _, f in spans)) for b, x in ws]
-            pairs = list(slot.get('hosts', []))
-            if slot.get('other'):
-                pairs.append(['', slot['other']])
-            total = sum(v for _, v in pairs)
-            deliv = slot.get('delivered')
-            scale = deliv / total if deliv is not None and total > deliv else 1.0
+            ent = entries_of(slot)
+            total = sum(e[0] for e in ent.values())
+            # the summed rest stands for several hosts: as many as the pipe had beyond the stored ones
+            wts = {'': max(1, slot.get('over', 0) - len(slot.get('hosts', [])))}
+            got, how = estimate(ent, slot.get('delivered'), slot.get('tins'), slot.get('tin_of'), wts,
+                                after=bool(slot.get('after')))
             pb = buckets.setdefault(pipe, {})
             ob = offered.setdefault(pipe, {})
+            mb = mbytes.setdefault(pipe, {})
+            for h, ms in how.items():
+                hm = mb.setdefault(h, {})
+                for m, v in ms.items():
+                    hm[m] = hm.get(m, 0) + v
             for b, f in sp:
                 ob[b] = ob.get(b, 0) + total * f
-                for h, v in pairs:
+                for h, v in got.items():
                     pb.setdefault(h, {})
-                    pb[h][b] = pb[h].get(b, 0) + v * scale * f
-    out = {}
+                    pb[h][b] = pb[h].get(b, 0) + v * f
+    out, every_out = {}, {}
     for pipe, hosts in buckets.items():
         totals = sorted(((sum(v.values()), h) for h, v in hosts.items() if h), reverse=True)
+        if every:
+            every_out[pipe] = [[h, [round(hosts[h].get(i, 0) * 8 / step) for i in range(n)]] for _, h in totals]
+            if '' in hosts:
+                every_out[pipe].append(['', [round(hosts[''].get(i, 0) * 8 / step) for i in range(n)]])
         top = [h for _, h in totals[:shown]]
         other = {}
         for h, v in hosts.items():
@@ -781,7 +959,30 @@ def host_series(row0, step, n, weights=None, shown=HOSTS_SHOWN):
         grouped[pipe] = sorted(h for h in hosts if h and h not in top)
         out[pipe] = series
     offered_bits = {pipe: [round(ob.get(i, 0) * 8 / step) for i in range(n)] for pipe, ob in offered.items()}
+    methods = {}
+    for pipe, mb in mbytes.items():
+        shown_set = {h for h, _ in out.get(pipe, [])}
+        pm, tot, rest = {}, {}, {}
+
+        def shares(ms):
+            s_ = sum(ms.values())
+            return {m: round(v / s_, 3) for m, v in ms.items() if v} if s_ > 0 else None
+        for h, ms in mb.items():
+            for m, v in ms.items():
+                tot[m] = tot.get(m, 0) + v
+                if h not in shown_set:
+                    rest[m] = rest.get(m, 0) + v
+            if h in shown_set and shares(ms):
+                pm[h] = shares(ms)
+        # '' = every host outside the coloured set (the "Other hosts" row), '*' = the whole pipe
+        for k, ms in (('', rest), ('*', tot)):
+            if shares(ms):
+                pm[k] = shares(ms)
+        methods[pipe] = pm
+    host_series.methods = methods
     host_series.grouped = grouped
+    host_series.all = every_out
+    host_series.store = store
     return out, first, offered_bits
 
 
@@ -866,7 +1067,7 @@ def hosts_other(series, grouped, nd):
     out = {}
     for p in set(grouped) | set(nd['p']):
         shown = {h for h, _ in series.get(p, [])}
-        now = {h for h, v in nd['p'].get(p, []) if h and v} - shown
+        now = {e[0] for e in nd['p'].get(p, []) if e[0] and e[1]} - shown     # rows [host, bytes, ...] (v2: more)
         out[p] = {'seen': len(set(grouped.get(p, [])) | now), 'sending': len(now)}
     return out
 
@@ -936,10 +1137,12 @@ def delta(full, since):
     # its own still matches (top hosts change: then it asks for everything)
     out['hosts'] = {p: [[h, cut_rows(a, k)] for h, a in v] for p, v in (full.get('hosts') or {}).items()}
     out['hosts_offered'] = {p: cut_rows(a, k) for p, a in (full.get('hosts_offered') or {}).items()}
+    if 'hosts_all' in full:
+        out['hosts_all'] = {p: [[h, cut_rows(a, k)] for h, a in v] for p, v in full['hosts_all'].items()}
     return out
 
 
-def history(window, since=None):
+def history(window, since=None, every=False):
     window = max(60, min(int(window), 365 * 86400))
     now = time.time()
     step = choose_step(window)
@@ -974,22 +1177,31 @@ def history(window, since=None):
         entry['bulk'] = bulk_status(entry, dict(lp or {}, step=latest.get('step')), prio)
     hosts, first, offered = ({}, None, {})
     shown = hosts_shown()
-    host_series.grouped = {}
+    host_series.grouped, host_series.all, host_series.store, host_series.methods = {}, {}, {}, {}
     nd = read_newest() or {'p': {}}
     if window <= HOSTS_KEEP * STEP:
         ref = next(iter(pipes.values()), None)
         row0, n = (ref['start'], len(ref['series']['bytes'])) if ref else (end - window + step, window // step)
         hosts, first, offered = host_series(row0, step, n,
-                                            {k: v['series'].get('bytes') for k, v in pipes.items()}, shown)
+                                            {k: v['series'].get('bytes') for k, v in pipes.items()}, shown, every)
     st = run_state()
     full = {'status': 'ok' if meta else 'off', 'now': now, 'window': window, 'step': step, 'pipes': pipes,
             'hosts': hosts, 'hosts_offered': offered, 'hosts_shown': shown,
+            # how each host's numbers were obtained over the window: {pipe: {host: {method: share}}}, '*' the
+            # pipe (exact: counted after CAKE; fair: fair share per tin; scaled; counted: no pipe total)
+            'hosts_method': host_series.methods,
             # the expander's numbers ("Show the M other hosts · K sending now"); the rows come from newest
             'hosts_other': hosts_other(hosts, host_series.grouped, nd),
             'hosts_stored': TOP, 'hosts_since': first, 'hosts_keep_s': HOSTS_KEEP * STEP,
             'running': st == 'running', 'state': st, 'enabled': enabled(), 'cost': meta.get('cost', {}),
             'priorities': prio, 'watchdog': watchdog_info(),
-            'started': meta.get('started'), 'written': meta.get('written'), 'delta': False}
+            'started': meta.get('started'), 'written': meta.get('written'), 'delta': False,
+            # what the ring holds: every host (store_all_hosts) or the busiest TOP + the rest, per pipe
+            # whether the whole window is complete, and pipes over the ceiling (the page says so)
+            'hosts_store': {'mode': meta.get('cost', {}).get('hosts_mode', 'top'), 'top': TOP,
+                            'ceiling': HOSTS_CEILING, 'pipes': host_series.store}}
+    if every:
+        full['hosts_all'] = host_series.all
     return delta(full, since) if since is not None else full
 
 
@@ -1124,6 +1336,78 @@ def status():
             'archives': [{'step_s': s * STEP, 'rows': r, 'span_s': s * STEP * r} for s, r in RRA]}
 
 
+# ------------------------------------------------------------------ insight level suggestion
+
+# The one place the Full/Light thresholds live: assess() returns them with the box's values and the
+# settings card on the sharing page prints both, so the page and the docs cannot disagree. How each was
+# derived: docs/INSIGHT-LEVELS.md (lab VM measurements and the host simulation in TESTING.md).
+ASSESS_LIMITS = {
+    'cores': {'full_min': 2, 'unit': 'cores'},                 # below: Light (judgement: one core also forwards)
+    'free_ram_mb': {'full_min': 512, 'unit': 'MB'},            # available RAM below this: Light (judgement)
+    'hosts': {'full_max': 100, 'unit': 'hosts'},               # busiest pipe now; one page poll ~250 ms at 100
+    'pf_states': {'full_max': 3000, 'unit': 'states'},         # ~100 ms per pf read (16 ms + 0.027 ms a state, 1.0.k)
+    'cpu_ms_per_sample': {'full_max': 100, 'unit': 'ms'},      # 1 % of one core at a 10 s step
+    'ring_mb': {'full_max': 10, 'unit': 'MB'},                 # the 6 h list in RAM at 100 hosts on 2 pipes: 9.3 MB
+    'ring_share_of_free': {'full_max': 0.05, 'unit': ''},      # that list as a share of available RAM
+}
+RING_BYTES_PER_HOST = 24        # measured 21.3-24.2 B per IPv4 entry (lab VM, docs/INSIGHT-LEVELS.md);
+                                # 24 leaves room for longer addresses
+# the two presets; "Custom" is any other mix (the page derives the level, nothing stores it)
+LEVELS = {'full': {'store_all_hosts': '1', 'hosts_interval': '10', 'poll_seconds': '10'},
+          'light': {'store_all_hosts': '0', 'hosts_interval': '30', 'poll_seconds': '30'}}
+
+
+def sysctl_values(names):
+    rc, out, _ = run([SYSCTL] + names)
+    vals = {}
+    for line in (out or '').splitlines() if rc == 0 else []:
+        k, _, v = line.partition(':')
+        vals[k.strip()] = v.strip()
+    return vals
+
+
+def assess():
+    """ cheap reads only (sysctl, the sampler's own meta and newest step): the box's facts, the
+    thresholds, the rows that decided, and a suggested level. Never changes a setting. """
+    sc = sysctl_values(['hw.ncpu', 'hw.model', 'hw.physmem', 'hw.pagesize', 'vm.stats.vm.v_free_count',
+                        'vm.stats.vm.v_inactive_count'])
+
+    def num(k):
+        try:
+            return int(sc.get(k, ''))
+        except ValueError:
+            return None
+    page = num('hw.pagesize') or 4096
+    free = (num('vm.stats.vm.v_free_count') or 0) + (num('vm.stats.vm.v_inactive_count') or 0)
+    try:
+        with open(META) as f:
+            cost = json.load(f).get('cost', {})
+    except (OSError, ValueError):
+        cost = {}
+    nd = read_newest() or {'p': {}}
+    per_pipe = {k: len([e for e in v if e[0]]) for k, v in nd['p'].items() if not k.startswith('na-')}
+    busiest = max(per_pipe.values()) if per_pipe else 0
+    stored = sum(min(n, HOSTS_CEILING) for n in per_pipe.values())
+    every = max(1, int(cost.get('hosts_base_s', STEP)) // STEP)
+    ring_mb = round(stored * RING_BYTES_PER_HOST * HOSTS_KEEP / every / 1e6, 1)
+    free_mb = round(free * page / 1048576) if free else None
+    facts = {'cores': num('hw.ncpu'), 'free_ram_mb': free_mb, 'hosts': busiest,
+             'pf_states': cost.get('states'), 'cpu_ms_per_sample': cost.get('cpu_ms_per_sample'),
+             'ring_mb': ring_mb, 'ring_share_of_free': round(ring_mb / free_mb, 3) if free_mb else None}
+    rows = []
+    for k, lim in ASSESS_LIMITS.items():
+        v = facts.get(k)
+        light = None if v is None else (v < lim['full_min'] if 'full_min' in lim else v > lim['full_max'])
+        rows.append({'key': k, 'value': v, 'unit': lim['unit'], 'full_min': lim.get('full_min'),
+                     'full_max': lim.get('full_max'), 'light': light})
+    decided = [r['key'] for r in rows if r['light']]
+    return {'status': 'ok', 'suggest': 'light' if decided else 'full', 'decided': decided, 'rows': rows,
+            'model': sc.get('hw.model', ''), 'ram_mb': round((num('hw.physmem') or 0) / 1048576),
+            'ring_bytes_now': cost.get('ring_bytes'), 'hosts_mode': cost.get('hosts_mode'),
+            'hosts_over': cost.get('hosts_over') or {}, 'pipes_hosts': per_pipe, 'levels': LEVELS,
+            'bytes_per_host': RING_BYTES_PER_HOST, 'ring_lines': HOSTS_KEEP, 'ceiling': HOSTS_CEILING}
+
+
 def once():
     cfg = read_config()
     pmap, topo = topology(cfg)
@@ -1148,14 +1432,15 @@ if __name__ == '__main__':
     try:
         if cmd == 'history':
             since = sys.argv[3] if len(sys.argv) > 3 and re.fullmatch(r'[0-9]{1,12}(\.[0-9]{1,6})?', sys.argv[3]) else None
-            result = history(sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].isdigit() else 3600, since)
+            result = history(sys.argv[2] if len(sys.argv) > 2 and sys.argv[2].isdigit() else 3600, since,
+                             len(sys.argv) > 4 and sys.argv[4] == '1')
         elif cmd == 'newest':
             a = (sys.argv[2:] + ['', '', '', '', ''])[:5]
             result = newest(a[0] if a[0].isdigit() else '', a[1] if re.fullmatch(r'[0-9A-Fa-f:.]{1,64}', a[1]) else '',
                             a[2] if a[2] in ('rate', 'ip') else 'rate', a[3] if a[3].isdigit() else 0,
                             a[4] if a[4].isdigit() else 50)
         else:
-            actions = {'start': start, 'stop': stop, 'status': status, 'once': once, 'ensure': ensure,
+            actions = {'start': start, 'stop': stop, 'status': status, 'once': once, 'ensure': ensure, 'assess': assess,
                        'restart': lambda: (stop(), start())[1]}
             result = actions[cmd]() if cmd in actions else {'status': 'failed', 'message': 'unknown command'}
     except Exception as exc:

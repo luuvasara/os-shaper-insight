@@ -16,15 +16,16 @@ Earlier name: os-shaper-assistant (used only for early test installs until 2026-
 
 ## Screenshots
 
-All taken on the lab VM (versions 1.0.h and 1.0.i; the addresses are lab and documentation addresses), at
+All taken on the lab VM (versions 1.0.h to 1.0.k; the addresses are lab and documentation addresses), at
 1920x1080 unless noted; tall pages are cropped to their top part.
 
-**Sharing: who uses each pipe.** Each host's rate stacked under the pipe's real payload cap,
-the "Limiting now" verdict, drops and ECN marks, and the per-class (CAKE tin) view with the
-Background floor. This is the question a single speed test cannot answer: how the line is
+**Sharing: who uses each pipe.** Each host's rate under the pipe's real payload cap, the
+"Limiting now" verdict, drops and ECN marks, the per-class (CAKE tin) view, and how each
+host's number was counted. Several layouts and graphs show the same data; this one is the
+table first with one row per host. This is the question a single speed test cannot answer: how the line is
 shared while several devices want it.
 
-![Sharing page: per-host rates stacked under the 38.9 Mbit/s cap of a 40 Mbit/s pipe, a host table with name, IP, MAC and manufacturer, drops and marks, and the per-class chart and table](docs/screenshots/sharing-light.png)
+![Sharing page: layout and graph selectors, the pipe badges, horizon rows per class and per host under the 38.9 Mbit/s cap of a 40 Mbit/s pipe, and a host table with name, IP, MAC, manufacturer, class, rate, share and how it was counted](docs/screenshots/sharing-light.png)
 
 **Sharing with 1,000 hosts.** The chart colours at most 8 hosts and groups the rest; the full
 list comes from the server, windowed, with a search box. It shows the page stays usable on a
@@ -71,7 +72,7 @@ on a phone.
 
 ![Sharing page in the dark theme](docs/screenshots/sharing-dark.png)
 
-<img src="docs/screenshots/sharing-phone-light.png" width="260" alt="Sharing page at 390 px wide: the recording line, the Limiting now badge and the stacked chart">
+<img src="docs/screenshots/sharing-phone-light.png" width="260" alt="Sharing page at 390 px wide: the recording line, the view selectors, the pipe badges, the horizon rows and the host table">
 
 ## What it does
 
@@ -96,7 +97,9 @@ What it only reads:
   or at least 1 drop/s while at half the cap or more), CAKE drops, ECN marks and average wait,
   and with diffserv the rate per CAKE tin with the Bulk threshold (1/16 of the rate) and whether
   Background traffic is using the free line, sharing or yielding. It explains why a single speed test cannot show
-  sharing. Windows from 10 minutes to a year. Full privilege only: it lists local addresses.
+  sharing. Five layouts and five graphs of the same data, picked on the page. Download per host is
+  counted after CAKE (from the LAN-side pf state); a "How counted" column says when a number is an
+  estimate instead. Windows from 10 minutes to a year. Full privilege only: it lists local addresses.
 - **History sampler** (on by default; the sharing page switches it off): every 10 s it reads
   the CAKE counters (`sysctl`), the shaper rule counters (`ipfw show`) and the pf states
   (`pfctl -vss`, for the per-host rates; pre-NAT addresses credit upload to the LAN host). Each
@@ -104,14 +107,15 @@ What it only reads:
   `/var/db/rrd` (`pipeN-shaper.rrd`, `pipeN-tins-shaper.rrd`; 10 s for 6 hours, 1 minute for 3
   days, 10 minutes for 30 days, 1 hour for a year; about 1.9 + 1.3 MB per CAKE pipe with four
   tins), which survive reboots; Reporting › Health lists them under "shaper". Hosts are kept for
-  6 hours in `/var/run/shaperinsight/hosts.jsonl` (top 16 per pipe and step; the page colours 3 to 8
-  of them, setting "Hosts drawn", 8 by default, and groups the rest), not in RRDs: an RRD
+  6 hours in `/var/run/shaperinsight/hosts.jsonl` (every host, up to 2,000 per pipe and step, or the top 16
+  with "Store every host's history" off; the page colours 3 to 8 of them, setting "Hosts drawn", 8 by default, and groups the rest), not in RRDs: an RRD
   has a fixed set of series and the busiest hosts keep changing. It runs as a service
   (`daemon(8)`, System › Diagnostics › Services lists it), starts at boot and on install, and
   stops on uninstall; its RRD files stay, like core's. Cost, measured on a 4-core lab VM: idle
   about 15 ms of CPU a sample and 18 MB; 22 000 states about 230 ms and 46 MB with the per-host
   read every 30 s; above 50 000 states the per-host view pauses and memory is given back once
-  they drop. The sharing page shows the current cost; a cron job (`sampler.ensure`, every 5
+  they drop. The sharing page shows the current cost and suggests an insight level (Full or Light,
+  `docs/INSIGHT-LEVELS.md`); a cron job (`sampler.ensure`, every 5
   minutes) restarts a sampler that stopped while switched on, and health check S10 reports it.
 - **Tables**: every table sorts (click or Enter on a header), host tables show Name, IP, MAC and
   Manufacturer (from core's IEEE list, as the ARP page does; no lookups leave the firewall), and
@@ -164,12 +168,13 @@ built from that tag and its SHA-256. The package is not signed; check the hash. 
 OPNsense 26.7 (amd64).
 
 ```sh
-fetch https://github.com/luuvasara/os-shaper-insight/releases/download/v1.0.i/os-shaper-insight-devel-1.0.i.pkg
-sha256 -q os-shaper-insight-devel-1.0.i.pkg   # compare with SHA256SUMS on the release page
-pkg add os-shaper-insight-devel-1.0.i.pkg
+fetch https://github.com/luuvasara/os-shaper-insight/releases/download/v2026.11.23a/os-shaper-insight-devel-2026.11.23a.pkg
+sha256 -q os-shaper-insight-devel-2026.11.23a.pkg   # compare with SHA256SUMS on the release page
+pkg add os-shaper-insight-devel-2026.11.23a.pkg
 ```
 
-Updates are manual: install the next release's package the same way. Removal: see "Remove".
+Updates are manual: install the next release's package the same way. Versions after 1.0.i are dated
+(year.month.day plus a letter, e.g. 2026.11.23a) and sort after the 1.0.x ones. Removal: see "Remove".
 
 ## Install for testing (from source)
 
@@ -190,7 +195,11 @@ from this project's side.
 
    ```sh
    tar -C net -cf - shaper-insight | ssh root@firewall 'tar -C /usr/plugins/net -xf -'
+   ssh root@firewall 'chmod -R go-w /usr/plugins/net/shaper-insight'
    ```
+
+   The package keeps the files' modes, and the scripts in it run as root; the `chmod` makes sure
+   no file is group- or world-writable, whatever umask the checkout was made under.
 
 3. Build, install and register it:
 
@@ -310,7 +319,8 @@ this repository because they encode the test host's setup; `TESTING.md` describe
 and results without them. `tools/shots/` takes the screenshots and runs axe-core (`npm install`
 there first; it uses the system Chrome).
 
-Tests: `python3 -m unittest discover -s tests`. Claim ids: `tools/claims/build.py --check`
+Tests: `python3 -m unittest discover -s tests`. File modes: `tools/check_modes.py --tree net/shaper-insight`
+before a build and `tools/check_modes.py PKG` after it (fails on group- or world-writable files). Claim ids: `tools/claims/build.py --check`
 checks that every "Why?" link the UI shows has an entry in `claims.json`, which carries the
 sources (URL and verbatim quote) itself. The fuller claims registry it was built from is not
 published; `--check` needs nothing else.

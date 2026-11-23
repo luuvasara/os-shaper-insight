@@ -53,7 +53,7 @@ def parse_ifconfig(text):
         if m:
             cur = out.setdefault(m.group(1), {'inet': [], 'inet6': [], 'groups': [], 'vlan_parent': None,
                                               'vlan_tag': None, 'laggports': [], 'members': [],
-                                              'up': 'UP' in m.group(2).split(',')})
+                                              'up': 'UP' in m.group(2).split(','), 'ipv6_disabled': False})
             continue
         if cur is None:
             continue
@@ -64,6 +64,10 @@ def parse_ifconfig(text):
         m = re.match(r'^inet6 (\S+?)(%\S+)? ', s + ' ')
         if m:
             cur['inet6'].append(m.group(1))
+        # "nd6 options=...<...,IFDISABLED,...>": IPv6 switched off on this interface
+        m = re.match(r'^nd6 options=\S*<([^>]*)>', s)
+        if m:
+            cur['ipv6_disabled'] = 'IFDISABLED' in m.group(1).split(',')
         m = re.match(r'^groups: (.*)', s)
         if m:
             cur['groups'] = m.group(1).split()
@@ -268,7 +272,11 @@ def detect(root, ifconfig_text, netstat_text, gateways=None, selection=None):
                      'signals': [{'strength': s, 'text': t, 'true': ok} for s, t, ok in sig],
                      'vlan': any([dev in extra['vlans'], bool(ifc.get(dev, {}).get('vlan_parent')),
                                   any(x in extra['vlans'] for x in trail[1:])]),
-                     'addresses': live['inet'] + live['inet6'], 'up': live.get('up', False)})
+                     'addresses': live['inet'] + live['inet6'], 'up': live.get('up', False),
+                     # IPv6 off: nd6 IFDISABLED, or not even a link-local address (health S3)
+                     'ipv6_off': dev in ifc and (live.get('ipv6_disabled', False) or not live['inet6']),
+                     # a gateway on the interface: pf adds reply-to to its rules (health S3)
+                     'gateway': bool(gws), 'vlan_parent': ifc.get(dev, {}).get('vlan_parent')})
     groups = {}
     for r in rows:
         if r['selected']:

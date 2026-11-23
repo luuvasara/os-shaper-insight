@@ -8,8 +8,9 @@
                 <Default>1</Default>
                 <Required>Y</Required>
             </redact>
+            <!-- the sharing page's refresh (it never refreshes faster than every 10 s); unused before 1.0.j -->
             <poll_seconds type="IntegerField">
-                <Default>5</Default>
+                <Default>10</Default>
                 <Required>Y</Required>
                 <MinimumValue>5</MinimumValue>
                 <MaximumValue>300</MaximumValue>
@@ -29,6 +30,23 @@
                 <MaximumValue>8</MaximumValue>
                 <ValidationMessage>Between 3 and 8 hosts.</ValidationMessage>
             </hosts_shown>
+            <!-- every host's 6 h history (up to 2,000 a pipe) instead of the busiest 16 + the rest; on by
+                 default (1.0.j); its cost is measured in docs/INSIGHT-LEVELS.md -->
+            <store_all_hosts type="BooleanField">
+                <Default>1</Default>
+                <Required>Y</Required>
+            </store_all_hosts>
+            <!-- seconds between per-host (pf state) reads; the sampler may read less often on its own
+                 when a read is costly (PF_BUDGET_MS) -->
+            <hosts_interval type="OptionField">
+                <Default>10</Default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <v10 value="10">10 s</v10>
+                    <v30 value="30">30 s</v30>
+                    <v60 value="60">60 s</v60>
+                </OptionValues>
+            </hosts_interval>
         </general>
         <bufferbloat>
             <!-- the load and the latency targets of the bufferbloat test; every default is a third

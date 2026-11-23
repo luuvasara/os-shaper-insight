@@ -212,6 +212,9 @@
 /* the cell's single flex child: takes the cell's width so its text wraps as one paragraph */
 .sa-grid .sa-cell { flex: 1 1 auto; min-width: 0; max-width: 100%; }
 .sa-v6 { overflow-wrap: anywhere; }
+/* "How counted" (1.0.k): the label carries its reason as a tooltip; estimates are marked as such */
+.sa-how { white-space: nowrap; text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+.sa-how-fair, .sa-how-scaled, .sa-how-counted { font-style: italic; }
 /* core's Tabulator CSS greys the empty-state text below 4.5:1; use the page's text colour */
 .sa-grid .tabulator-placeholder-contents { color: inherit !important; font-weight: normal !important; font-size: inherit !important; }
 .sa-grid .tabulator-col-title { white-space: normal; }
@@ -247,3 +250,96 @@
 .sa-grid .tabulator-cell[tabulator-field="rate"], .sa-grid .tabulator-cell[tabulator-field="share"] { white-space: nowrap; }
 .sa-hostcell { display: inline-block; vertical-align: middle; min-width: 0; }
 .sa-muted { white-space: nowrap; }
+
+/* sharing page, switchable views (1.0.j): layouts L1-L5 and graphs G1-G5.
+   Colours come from the text colour and translucent greys, so the light and the dark theme both work. */
+.sa-viewbar-box { padding-top: 0; }
+#sa-view-note { margin: 0 0 8px; }
+.sa-viewsel { display: grid; gap: 6px; margin-bottom: 8px; }
+.sa-vs-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.sa-vs-row label { min-width: 6em; margin: 0; }
+.sa-vs-why { flex: 1 1 320px; }
+.sa-pipebar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px; }
+.sa-pipebar .btn, .sa-g4-tools .btn, .sa-chips .btn, .sa-pager .btn { min-height: 28px; }
+.sa-pipebar .btn[aria-pressed="true"], .sa-g4-tools .btn[aria-pressed="true"] { font-weight: 700; box-shadow: inset 0 -3px 0 currentColor; }
+.sa-pipe-title { font-size: 1.2em; margin: 4px 0; }
+.sa-card { border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 4px; padding: 12px; margin-bottom: 16px; min-width: 0; }
+.sa-card h3 { font-size: 1.1em; margin: 0 0 8px; }
+.sa-grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.sa-grid-wide { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.sa-grid-md { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }
+.sa-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.sa-kpi { border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 4px; padding: 8px 12px; }
+.sa-kpi p { margin: 0; }
+.sa-kpi-k { font-size: 0.9em; }
+.sa-kpi-v { font-size: 1.5em; font-weight: 700; }
+.sa-verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.sa-verdict { border: 1px solid rgba(128, 128, 128, 0.35); border-left-width: 6px; border-radius: 4px; padding: 10px 14px; }
+.sa-verdict.sa-v-lim { border-left-color: #c62828; }
+.sa-verdict h3 { font-size: 1.15em; margin: 0 0 6px; }
+.sa-verdict p { margin: 0 0 4px; }
+.sa-story { border-top: 1px solid rgba(128, 128, 128, 0.35); padding-top: 12px; margin-top: 16px; }
+.sa-story h3 { font-size: 1.15em; }
+.sa-n { display: inline-block; min-width: 1.6em; }
+.sa-lead { max-width: 90ch; }
+.sa-readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.sa-readout { border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 4px; padding: 10px 14px; }
+.sa-readout p { margin: 4px 0 0; }
+.sa-ro-big { font-size: 1.8em; font-weight: 700; }
+.sa-ro-big small { font-size: 0.55em; font-weight: 400; }
+.sa-readouts-slim .sa-ro-big { font-size: 1.3em; }
+.sa-bullet { position: relative; height: 12px; background: rgba(128, 128, 128, 0.25); border-radius: 2px; margin: 6px 0; }
+.sa-bullet i { position: absolute; left: 0; top: 0; bottom: 0; background: currentColor; opacity: 0.75; border-radius: 2px; }
+.sa-bullet b { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1px; background: currentColor; }
+.sa-toplist { list-style: none; padding: 0; margin: 0; }
+.sa-toplist li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 3.5em minmax(40px, 30%); align-items: center; gap: 6px;
+    padding: 3px 0; border-bottom: 1px solid rgba(128, 128, 128, 0.2); }
+.sa-tl-name { min-width: 0; overflow: hidden; }
+.sa-tl-num { text-align: right; white-space: nowrap; }
+.sa-tl-bar { display: block; height: 10px; background: rgba(128, 128, 128, 0.2); border-radius: 2px; overflow: hidden; }
+.sa-tl-bar i { display: block; height: 100%; }
+.sa-sw-none { background: transparent; }
+.sa-sw-head { background: radial-gradient(rgba(128, 128, 128, 0.7) 1px, transparent 1.3px) 0 0 / 4px 4px; }
+.sa-sw-dash { border: 0; border-top: 2px dashed currentColor; height: 2px; border-radius: 0; vertical-align: middle; }
+.sa-sw-limit { background: #c62828; }
+.sa-leg-btn { border: 1px solid transparent; background: transparent; color: inherit; padding: 0 4px; min-height: 24px; border-radius: 3px; display: inline-flex; align-items: center; }
+.sa-leg-btn[aria-pressed="false"] { text-decoration: line-through; opacity: 0.6; }
+.sa-leg-btn:hover, .sa-leg-btn:focus-visible { border-color: currentColor; }
+.sa-hz-box { width: 100%; overflow: hidden; }
+.sa-hz { display: block; }
+.sa-pager { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.sa-g4-tools { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-bottom: 6px; }
+.sa-g4-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(200px, 1fr); gap: 16px; }
+.sa-g4-tbl th { font-weight: 400; white-space: nowrap; }
+.sa-g4-tbl td:nth-child(2) { width: 45%; }
+.sa-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.sa-g3-status { margin: 0 0 6px; }
+.sa-inline-h { display: inline; font-size: 1.1em; }
+.sa-rec { margin: 8px 0; }
+.sa-rec summary { cursor: pointer; min-height: 24px; }
+#sa-rec-body { border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 4px; padding: 10px 14px; margin-top: 6px; max-width: 120ch; }
+.sa-rec-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-bottom: 8px; }
+.sa-rec-row > .sa-meta { flex: 1 1 360px; margin: 0; }
+.sa-rec-row input[type=checkbox] { width: 18px; height: 18px; margin: 0; vertical-align: middle; }
+.sa-assess h3 { font-size: 1.1em; margin: 12px 0 4px; }
+.sa-assess-tbl { max-width: 900px; }
+.sa-assess-tbl tr.sa-decided { font-weight: 700; outline: 2px solid currentColor; outline-offset: -2px; }
+@media (max-width: 767px) {
+    .sa-grid2, .sa-grid-wide, .sa-grid-md, .sa-g4-grid { grid-template-columns: minmax(0, 1fr); }
+    .sa-kpis { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .sa-vs-row select { max-width: 100%; }
+    .sa-toplist li { grid-template-columns: 18px minmax(0, 1fr) auto 3em; }
+    .sa-toplist .sa-tl-bar { display: none; }
+    .sa-assess-tbl th, .sa-assess-tbl td { font-size: 0.9em; padding: 4px !important; }
+}
+.sa-find[hidden] { display: none; }
+.sa-vs-row select, .sa-rec-row select { width: auto; min-width: 12em; max-width: 100%; padding-right: 28px; }
+/* phone: no frame around a card, a rule above it instead, so tables keep the full width (a framed card
+   left the per-class table 26 px short and it scrolled inside its own box, lab 2026-11-23) */
+@media (max-width: 767px) {
+    .sa-card { border: 0; border-top: 1px solid rgba(128, 128, 128, 0.35); border-radius: 0; padding: 10px 0 0; }
+}
+/* L4 tabs: core's link colour on the dark theme fails 4.5:1 (axe, lab 2026-11-23); the text colour, with
+   the selected tab marked by its border and weight */
+#sa-view .nav-tabs > li > a { color: inherit; }
+#sa-view .nav-tabs > li.active > a { font-weight: 700; }

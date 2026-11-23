@@ -31,6 +31,22 @@ os-cake is optional: it is detected at runtime.
 Plugin Changelog
 ================
 
+2026.11.23a
+
+* Health check S3 tells redundant (reply-to), IPv6-off and idle rules
+  apart from traffic that really left unshaped
+* Package files are installed without group write
+
+1.0.k
+
+* Download per host is counted after CAKE; a "How counted" column
+  says how each number was obtained
+
+1.0.j
+
+* Sharing page: switchable layouts and graphs, every host's history
+  stored, and a Full / Light insight level with a suggestion
+
 1.0.i
 
 * Tables fit the page: columns share the width and wrap; a table

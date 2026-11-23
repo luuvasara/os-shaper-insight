@@ -31,7 +31,10 @@
 /bin/sh /usr/local/etc/rc.ipfw "$@"
 rc=$?
 # every reload zeroes the rule counters: health check S3 reads this time ("wait for traffic")
-: > /var/run/shaperinsight-ipfw-reload
+# the stamp's time says when the rule counters went to 0; its content is the interface byte
+# counters at that moment (netstat JSON), so health check S3 compares like with like
+/usr/bin/netstat -ibn --libxo json > /var/run/shaperinsight-ipfw-reload 2>/dev/null ||
+	: > /var/run/shaperinsight-ipfw-reload
 if ! out=$(/usr/local/opnsense/scripts/shaperinsight/prio.py load 2>&1); then
 	logger -t shaperinsight "priority marks not loaded: $out"
 fi

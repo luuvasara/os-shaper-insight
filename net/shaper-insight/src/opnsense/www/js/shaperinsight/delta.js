@@ -25,7 +25,7 @@
  */
 
 /*
- * Incremental polling of sampler/history (sim100: send only what changed). The page keeps the last full
+ * Incremental polling of sampler/history (host simulation: send only what changed). The page keeps the last full
  * answer; each poll asks ?since=<its newest row> and gets the rows from two steps before it on
  * (sampler.py delta()). merge() puts them in place, trims the rows that left the window and returns the
  * merged answer, or null when it cannot be merged safely (other step, other pipes, rows that do not
@@ -108,6 +108,24 @@
         Object.keys(d.hosts_offered || {}).forEach(function (p) {
             out.hosts_offered[p] = join((old.hosts_offered || {})[p], d.hosts_offered[p], idx, drop);
         });
+        /* every stored host (?all=1): joined by name. A host that is new in the delta had no traffic in
+           the rows the page already has (the server lists every host with traffic in the window), so its
+           earlier rows are zeros; a host the delta no longer lists has left the window. */
+        if (d.hosts_all) {
+            if (!old.hosts_all) {
+                return null;
+            }
+            const n0 = rows(old);
+            out.hosts_all = {};
+            Object.keys(d.hosts_all).forEach(function (p) {
+                const prev = {};
+                (old.hosts_all[p] || []).forEach(function (h) { prev[h[0]] = h[1]; });
+                out.hosts_all[p] = d.hosts_all[p].map(function (h) {
+                    const before = prev[h[0]] || new Array(n0).fill(0);
+                    return [h[0], join(before, h[1], idx, drop)];
+                });
+            });
+        }
         return out;
     }
 

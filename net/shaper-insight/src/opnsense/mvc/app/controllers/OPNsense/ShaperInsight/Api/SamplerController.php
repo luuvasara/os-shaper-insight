@@ -87,7 +87,18 @@ class SamplerController extends ApiControllerBase
         /* ?since=<newest row the page has>: only the rows after it (incremental polling) */
         $since = (string)$this->request->get('since', null, '');
         $since = preg_match('/^[0-9]{1,12}(\.[0-9]{1,6})?$/', $since) ? $since : '-';
-        return $this->call('history', [(string)max(60, min($seconds, 365 * 86400)), $since]);
+        /* ?all=1: every stored host's series too, only while a graph that needs them is on screen */
+        $all = $this->request->get('all', null, '0') === '1' ? '1' : '0';
+        return $this->call('history', [(string)max(60, min($seconds, 365 * 86400)), $since, $all]);
+    }
+
+    /**
+     * cheap facts about this firewall, the Full/Light thresholds and a suggested insight level;
+     * read-only, the page applies a level only when the user clicks
+     */
+    public function assessAction()
+    {
+        return $this->call('assess');
     }
 
     public function startAction()

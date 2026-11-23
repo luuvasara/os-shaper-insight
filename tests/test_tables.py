@@ -201,6 +201,9 @@ class NewestStep(unittest.TestCase):
         series = {'10000': [['a', []], ['b', []], ['', []]]}
         nd = {'p': {'10000': [['a', 5], ['c', 3], ['d', 0], ['e', 2]]}}
         self.assertEqual(self.s.hosts_other(series, {'10000': ['c', 'f']}, nd)['10000'], {'seen': 3, 'sending': 2})
+        # 1.0.k newest rows carry more fields: [host, sent, offered, {method: bytes}] (the lab caught the unpack)
+        nd2 = {'p': {'10000': [['a', 5, 6], ['c', 3, 9, {'fair': 3}], ['d', 0, 0], ['e', 2, 2]]}}
+        self.assertEqual(self.s.hosts_other(series, {'10000': ['c', 'f']}, nd2)['10000'], {'seen': 3, 'sending': 2})
 
     def test_shown_capped_at_eight(self):
         with mock.patch.object(self.s, 'config_root') as cr:
@@ -298,14 +301,29 @@ class IncrementalHistory(unittest.TestCase):
         self.assertIsNone(node_merge(old, d2))                                      # a pipe went away
         self.assertIsNone(node_merge(None, d))                                      # nothing to merge into
 
+    @unittest.skipUnless(shutil.which('node'), 'node not installed')
+    def test_every_host_series_merge_by_name(self):
+        # ?all=1: hosts come and go; the merge must equal the full answer three steps later
+        old = fake_history(1000, 360)
+        old['hosts_all'] = {'10000': [['a', [1] * 360], ['b', [2] * 360]]}
+        new_full = fake_history(1030, 360)
+        new_full['hosts_all'] = {'10000': [['b', [2] * 357 + [5, 5, 5]], ['a', [1] * 360], ['c', [0] * 357 + [7, 7, 7]]]}
+        d = self.s.delta(new_full, 1000 + 359 * 10)
+        self.assertEqual(len(d['hosts_all']['10000'][0][1]), 5)
+        m = node_merge(old, d)
+        self.assertEqual(m['hosts_all'], new_full['hosts_all'])
+        self.assertIsNone(node_merge(fake_history(1000, 360), d))                  # page had no host list yet
+
 
 class TablesInPages(unittest.TestCase):
     """ every table is SA.table (core's Tabulator) unless it is a form, with the reason in data-sa-form """
     VIEWS = os.path.join(SRC, 'mvc', 'app', 'views', 'OPNsense', 'ShaperInsight')
 
+    SHARING_JS = os.path.join(SRC, 'www', 'js', 'shaperinsight', 'sharing')
+
     def test_no_hand_built_tables(self):
         bad = []
-        for path in glob.glob(os.path.join(self.VIEWS, '*.volt')):
+        for path in glob.glob(os.path.join(self.VIEWS, '*.volt')) + glob.glob(os.path.join(self.SHARING_JS, '*.js')):
             with open(path) as f:
                 text = f.read()
             for m in re.finditer(r'<table\b[^>]*>', text):
@@ -317,10 +335,11 @@ class TablesInPages(unittest.TestCase):
         self.assertTrue(re.search(r'<table\b[^>]*>', '<div><table class="x"></table></div>'))
 
     def test_host_tables_have_separate_columns(self):
-        with open(os.path.join(self.VIEWS, 'sharing.volt')) as f:
+        # the hosts table moved from sharing.volt into the sharing data layer (1.0.j)
+        with open(os.path.join(self.SHARING_JS, 'model.js')) as f:
             text = f.read()
-        for col in ('"Name"', '"IP"', '"MAC"', '"Manufacturer"'):
-            self.assertIn("lang._(%s)" % col, text)
+        for col in ("'Name'", "'IP'", "'MAC'", "'Manufacturer'"):
+            self.assertIn("title: %s" % col, text)
         self.assertIn("type: 'ip'", text)
 
 

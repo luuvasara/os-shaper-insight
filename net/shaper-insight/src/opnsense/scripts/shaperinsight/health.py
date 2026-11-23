@@ -81,10 +81,26 @@ if __name__ == '__main__':
         reloaded = None
     try:
         import sampler
-        samp = {'enabled': sampler.enabled(), 'state': sampler.run_state(), 'watchdog': sampler.watchdog_info()}
+        samp = {'enabled': sampler.enabled(), 'state': sampler.run_state(), 'watchdog': sampler.watchdog_info(),
+                'cost': sampler.status().get('cost', {})}
+        try:
+            samp['assess'] = sampler.assess()
+        except Exception:           # the suggestion is a convenience; the check stands without it
+            samp['assess'] = None
     except Exception:
         samp = None
-    checks = run_checks(snap, wans, prio_last, priorities_set(), reloaded, sampler=samp)
+    # S3: bytes per interface now and at the last rule reload (rc.ipfw stores netstat's JSON in
+    # the reload stamp); one netstat run, ~1 ms. CLOCK_MONOTONIC counts from boot on FreeBSD
+    from lib.health import interface_view
+    rc, now_stats, _err = run(['/usr/bin/netstat', '-ibn', '--libxo', 'json'])
+    try:
+        with open('/var/run/shaperinsight-ipfw-reload') as f:
+            base_stats = f.read(4 << 20)
+    except OSError:
+        base_stats = ''
+    ifview = interface_view(det, now_stats if rc == 0 else '', base_stats, reloaded,
+                            time.time() - time.monotonic())
+    checks = run_checks(snap, wans, prio_last, priorities_set(), reloaded, sampler=samp, ifview=ifview)
     no_shaper = all(i['text'].startswith('Not applicable: no shaper') for c in checks if c['id'] not in ('S9', 'S10') for i in c['items'])
     print(json.dumps({'checks': checks, 'no_shaper': no_shaper, 'wans': wans, 'detect_error': det['error'],
                       'generated': snap['generated'], 'elapsed_ms': round((time.monotonic() - t0) * 1000, 1)}))

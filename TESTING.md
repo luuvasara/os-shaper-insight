@@ -25,11 +25,11 @@ counters untouched. The setup page's Apply and Remove are tested in the lab only
 
 ## Automated checks
 
-| Check | Result (at 1.0.i unless noted) |
+| Check | Result (at 2026.11.23a unless noted) |
 |---|---|
-| `python3 -m unittest discover -s tests` | 210 tests, OK |
+| `python3 -m unittest discover -s tests` | 291 tests, OK (1 skipped: the built-package mode check needs `SA_PKG`) |
 | `tools/claims/build.py --check` | 26 claim ids used, 27 in `claims.json`, 0 problems |
-| ruff `--select F`, pycodestyle (E501 ignored), `php -l` (PHP 8.5), phpcs (core ruleset), shellcheck | clean (at 1.0.f) |
+| ruff `--select F`, pycodestyle (E501 ignored), `php -l` (PHP 8.5), phpcs (core ruleset), shellcheck | clean (at 1.0.f); ruff F and shellcheck clean at 2026.11.23a |
 | axe-core 4 (WCAG 2.0/2.1/2.2 A+AA + best practice), every page, 1920x1080 and 390x844, light and dark | 0 violations in this plugin's markup; the remaining hits come from OPNsense core pages (menu search box, sidebar toggle size, navbar landmarks, dark footer links) |
 | `tools/shots/terms-check.js` | every technical term on 6 rendered pages has a glossary chip; fails as intended when chips are removed (`SA_TERMS_NEGATIVE=1`) |
 | `tools/shots/tables-check.js` | every table on the five pages is built by the shared table component: sortable by keyboard, `aria-sort`, an empty state, a swatch where rows have a chart series, linked object names with hover, no sideways scroll at 1920 or 390 px, no table wider than its box, no cell cut off, IPv4 addresses on one line; fails as intended on a plain table and on unprotected addresses (`SA_TABLES_NEGATIVE=1`) |
@@ -178,6 +178,53 @@ window, pipes or coloured hosts. Measured with a one-hour window: the gzip answe
 poll drops from about 16 kB to 1 kB with one busy pipe and from about 120 kB to 3 kB with
 eight. Tests: `IncrementalHistory` in `tests/test_tables.py` (the merged page equals a full
 answer taken later; restart mid-window; no merge when the hosts, window or pipes changed).
+
+## Sharing views and insight level (1.0.j)
+
+The sharing page draws one data model with five layouts and five graphs; each slot offers only
+the graphs that worked there in mock-ups, 21 combinations in all, and each was rendered at
+1920x1080 and 390x844 in both themes with axe-core and no console errors. Graph libraries
+load only while their graph is on screen. "Store every host's history" (on by default, up to
+2,000 hosts a pipe) and the Full / Light insight level are measured in
+`docs/INSIGHT-LEVELS.md`. Tests: `StoreEveryHost`, `InsightLevel` and the `hosts_all` merge in
+`tests/test_sharing.py`.
+
+## Per-host counting (1.0.k)
+
+pf counts a dropped packet on the state of the interface where it came in, so the WAN-side
+state counts download before CAKE (lab: 1.04-1.12 x what the pipe sent with TCP, 2.4 x with a
+UDP flood). 1.0.k reads download from each connection's LAN-side state, which counts after
+CAKE, paired with its WAN-side state by protocol and both address:port pairs (IPv4 with NAT,
+IPv6 without NAT, port forwards). What has no LAN-side state is kept when the pipe total agrees
+within 2 %, otherwise given a max-min fair share inside its CAKE tin, or scaled when the tins
+are unknown. Lab, 13 runs against the receivers' own counts: mean error per host 0.00-0.08
+Mbit/s (1.0.j: 0.26-7.94). The pairing makes a pf read about a quarter more expensive, so the
+insight level suggests Light above 3,000 pf states. Tests: `tests/test_fairshare.py`.
+
+## Health check S3 and interface bytes (2026.11.23a)
+
+S3 used to call every enabled rule with 0 matches a fault. On a multi-WAN firewall that is
+wrong in two common cases, both reproduced on the lab VM with VLAN WANs on one port:
+
+- Replies to connections that came in on a second WAN: ipfw sees them on the interface the
+  routing table chose and pf's reply-to moves them afterwards, so an upload rule on the second
+  WAN matches nothing while that WAN sends traffic. A LAN rule with a gateway (route-to) does
+  not hide traffic this way.
+- An IPv6-only rule on an interface with IPv6 off.
+
+S3 now compares each rule with the bytes its interface carried since the last rule reload
+(`netstat -ibn`, stored by the reload; a VLAN parent's counters have its VLANs' frames taken
+off) and says "not applicable", "no traffic", "redundant: shaped by rule ... into the same
+queue" or, only when no rule into that pipe caught the traffic, a warning. Rules are named as
+Firewall: Shaper: Rules shows them. Tests: the S3 cases in `tests/test_health.py` and
+`tests/test_detect.py`.
+
+## File modes (2026.11.23a)
+
+Packages up to 1.0.k were built from a tree made under umask 0002 and installed root-owned
+files writable by group `wheel`. 2026.11.23a is built with umask 022; `tests/test_modes.py` fails on
+a group- or world-writable file in `net/shaper-insight` (with a negative control) and, with
+`SA_PKG=<package>`, in a built package; `tools/check_modes.py` runs the same check by hand.
 
 ## Known gaps
 
